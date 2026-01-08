@@ -2,14 +2,39 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import Sidebar from "./components/Sidebar";
 import { TabID, ViewID, InsightResponse, TimeRange, ChartDataPoint, UserSubscription, PlanID } from "./types";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Cell, PieChart, Pie } from "recharts";
-import { Users, Eye, Clock, Calendar, Globe, Smartphone, Zap, MousePointer2, Check, ChevronLeft, ChevronRight, RefreshCcw, ShieldCheck, Download, Layers, Activity, TrendingDown, ArrowUpRight, MousePointerClick, ShoppingCart, CreditCard, CheckCircle2, Timer, AlertTriangle, LayoutGrid, Monitor, Tablet, UserPlus, Sigma, Binary, Mail, Link as LinkIcon, Lock, ArrowRight, Copy, Sparkles, Loader2, MapPin, AlertCircle, Info, UploadCloud, FileArchive, FileCode, Trash2, X } from "lucide-react";
+import { Users, Eye, Clock, Calendar, Globe, Smartphone, Zap, MousePointer2, Check, ChevronLeft, ChevronRight, RefreshCcw, ShieldCheck, Download, Layers, Activity, TrendingDown, ArrowUpRight, MousePointerClick, ShoppingCart, CreditCard, CheckCircle2, Timer, AlertTriangle, LayoutGrid, Monitor, Tablet, UserPlus, Sigma, Binary, Mail, Link as LinkIcon, Lock, ArrowRight, Copy, Sparkles, Loader2, MapPin, AlertCircle, Info, UploadCloud, FileArchive, FileCode, Trash2, X, LogOut, ChevronDown } from "lucide-react";
 import MetricCard from "./components/MetricCard";
 import ReportModal from "./components/ReportModal";
 import { BillingUpgrade, BillingSuccess, BillingCancel } from "./components/Billing";
 import { MOCK_CHANNELS, MOCK_FUNNEL, MOCK_PAGE_VIEWS, MOCK_HEATMAP_DATA, NAVIGATION_ITEMS, MOCK_KEYWORDS, MOCK_COUNTRIES } from "./constants";
 import { generateLocalInsights } from "./services/insightGenerator";
+import { useAuth, useProjects, useAnalytics } from "./hooks";
+import { Project, AnalyticsSummary } from "./services/api";
 
 const App: React.FC = () => {
+	// API Hooks
+	const { user, isAuthenticated, isLoading: isAuthLoading, login, logout } = useAuth();
+	const {
+		projects,
+		currentProject,
+		isLoading: isProjectsLoading,
+		error: projectsError,
+		fetchProjects,
+		createProjectFromUrl,
+		createProjectFromZip,
+		deleteProject,
+		selectProject,
+	} = useProjects();
+	const {
+		summary: analyticsSummary,
+		heatmap: heatmapData,
+		realtime: realtimeData,
+		isLoading: isAnalyticsLoading,
+		fetchSummary,
+		fetchHeatmap,
+		fetchRealtime,
+	} = useAnalytics();
+
 	// Navigation State
 	const [currentView, setCurrentView] = useState<ViewID>(ViewID.CONNECT);
 	const [activeTab, setActiveTab] = useState<TabID>(TabID.OVERVIEW);
@@ -17,11 +42,14 @@ const App: React.FC = () => {
 	// Connect View State
 	const [connectMode, setConnectMode] = useState<"url" | "file">("file");
 	const [urlInput, setUrlInput] = useState("");
+	const [projectName, setProjectName] = useState("");
+	const [subdomain, setSubdomain] = useState("");
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
 	const [connectError, setConnectError] = useState<string | null>(null);
 	const [copySuccess, setCopySuccess] = useState(false);
 	const [showCompareModal, setShowCompareModal] = useState(false);
+	const [showProjectSelector, setShowProjectSelector] = useState(false);
 
 	// File Upload State
 	const [uploadStatus, setUploadStatus] = useState<"idle" | "uploading" | "uploaded" | "error">("idle");
@@ -41,13 +69,52 @@ const App: React.FC = () => {
 	const [isNavigating, setIsNavigating] = useState(false);
 	const [selectedHeatmapPage, setSelectedHeatmapPage] = useState<string>("/home");
 
-	const [subscription, setSubscription] = useState<UserSubscription>({
-		plan_id: "free",
-		request_limit: 1000000,
-		usage_current_period: 750000,
-		subscription_status: "active",
-		billing_period_end: "2025-05-15",
-	});
+	// subscription은 user.tier 기반으로 동적으로 설정
+	const subscription = useMemo<UserSubscription>(() => {
+		const tierConfig: Record<string, { limit: number; plan: PlanID }> = {
+			FREE: { limit: 1000000, plan: "free" },
+			PRO: { limit: 5000000, plan: "pro" },
+			ENTERPRISE: { limit: 100000000, plan: "enterprise" },
+		};
+		const config = tierConfig[user?.tier || "FREE"] || tierConfig.FREE;
+		return {
+			plan_id: config.plan,
+			request_limit: config.limit,
+			usage_current_period: 750000, // 실제로는 API에서 가져와야 함
+			subscription_status: "active",
+			billing_period_end: "2025-05-15",
+		};
+	}, [user?.tier]);
+
+	// 인증 상태에 따른 뷰 전환
+	useEffect(() => {
+		if (!isAuthLoading) {
+			if (isAuthenticated && currentView === ViewID.LOGIN) {
+				setCurrentView(ViewID.ANALYTICS);
+				fetchProjects();
+			}
+		}
+	}, [isAuthenticated, isAuthLoading, currentView, fetchProjects]);
+
+	// 프로젝트 목록 조회 (인증된 경우)
+	useEffect(() => {
+		if (isAuthenticated) {
+			fetchProjects();
+		}
+	}, [isAuthenticated, fetchProjects]);
+
+	// 현재 프로젝트 분석 데이터 조회
+	useEffect(() => {
+		if (currentProject && currentView === ViewID.ANALYTICS) {
+			const days = timeRange === TimeRange.DAY ? 1 : timeRange === TimeRange.WEEK ? 7 : timeRange === TimeRange.MONTH ? 30 : 365;
+			fetchSummary(currentProject.id, days);
+			if (selectedHeatmapPage) {
+				fetchHeatmap(currentProject.id, selectedHeatmapPage, days);
+			}
+			// 실시간 데이터는 주기적으로 조회
+			fetchRealtime(currentProject.id);
+		}
+	}, [currentProject, currentView, timeRange, selectedHeatmapPage, fetchSummary, fetchHeatmap, fetchRealtime]);
 
 	const isBillingPage = useMemo(() => {
 		return activeTab === TabID.BILLING_UPGRADE || activeTab === TabID.BILLING_SUCCESS || activeTab === TabID.BILLING_CANCEL;
@@ -120,6 +187,42 @@ const App: React.FC = () => {
 		return Math.floor(base * 0.04);
 	};
 
+	// API 데이터가 있으면 사용, 없으면 목업 데이터 사용
+	const displayMetrics = useMemo(() => {
+		if (analyticsSummary) {
+			return {
+				totalVisitors: analyticsSummary.total_visitors,
+				dailyAverage: Math.floor(analyticsSummary.daily_average),
+				avgSessionTime: analyticsSummary.avg_session_time,
+				bounceRate: analyticsSummary.bounce_rate,
+				mobileRatio: analyticsSummary.mobile_ratio,
+				desktopRatio: analyticsSummary.desktop_ratio,
+				topPages: analyticsSummary.top_pages,
+				trafficSources: analyticsSummary.traffic_sources,
+				geography: analyticsSummary.geography,
+			};
+		}
+		// 목업 데이터 (API 데이터가 없을 때)
+		return {
+			totalVisitors: getScaledValue(124532),
+			dailyAverage: Math.floor(getScaledValue(124532) / (timeRange === TimeRange.YEAR ? 365 : chartData.length)),
+			avgSessionTime: 262,
+			bounceRate: 42.3,
+			mobileRatio: 62,
+			desktopRatio: 38,
+			topPages: MOCK_PAGE_VIEWS.map(p => ({ path: p.name, title: p.name, views: p.views, users: Math.floor(p.views * 0.7), avg_time: parseFloat(p.time.replace(':', '.')) * 60 })),
+			trafficSources: MOCK_CHANNELS.map(c => ({ source: c.name, medium: 'organic', users: Math.floor(c.value * 100), sessions: Math.floor(c.value * 120) })),
+			geography: MOCK_COUNTRIES.map(c => ({ country: c.name, city: '', users: c.value })),
+		};
+	}, [analyticsSummary, timeRange, chartData.length]);
+
+	// 체류시간 포맷팅 (초 -> mm:ss)
+	const formatSessionTime = (seconds: number) => {
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.floor(seconds % 60);
+		return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+	};
+
 	const updateInsights = async () => {
 		setIsInsightLoading(true);
 		try {
@@ -163,9 +266,14 @@ const App: React.FC = () => {
 		}, 1500);
 	};
 
-	const handleGenerateFromUrl = () => {
+	const handleGenerateFromUrl = async () => {
 		if (!urlInput.trim()) {
 			setConnectError("홈페이지 주소를 입력해 주세요.");
+			return;
+		}
+
+		if (!projectName.trim()) {
+			setConnectError("프로젝트 이름을 입력해 주세요.");
 			return;
 		}
 
@@ -177,10 +285,19 @@ const App: React.FC = () => {
 		setConnectError(null);
 		setIsGenerating(true);
 
-		setTimeout(() => {
+		try {
+			const project = await createProjectFromUrl({
+				name: projectName.trim(),
+				source_url: normalized,
+				custom_subdomain: subdomain.trim() || undefined,
+			});
+			setGeneratedUrl(`https://${project.full_domain}`);
+			selectProject(project);
+		} catch (error) {
+			setConnectError(error instanceof Error ? error.message : "프로젝트 생성에 실패했습니다.");
+		} finally {
 			setIsGenerating(false);
-			setGeneratedUrl(`https://artify.analytics/${Math.random().toString(36).substring(7)}`);
-		}, 2500);
+		}
 	};
 
 	const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -216,17 +333,45 @@ const App: React.FC = () => {
 		}, 100);
 	};
 
-	const handleGenerateFromFile = () => {
+	const handleGenerateFromFile = async () => {
+		if (!selectedFile) {
+			setConnectError("파일을 선택해 주세요.");
+			return;
+		}
+
+		if (!projectName.trim()) {
+			setConnectError("프로젝트 이름을 입력해 주세요.");
+			return;
+		}
+
+		if (!subdomain.trim()) {
+			setConnectError("서브도메인을 입력해 주세요.");
+			return;
+		}
+
+		setConnectError(null);
 		setIsGenerating(true);
-		setTimeout(() => {
+
+		try {
+			const project = await createProjectFromZip(
+				selectedFile,
+				projectName.trim(),
+				subdomain.trim()
+			);
+			setGeneratedUrl(`https://${project.full_domain}`);
+			selectProject(project);
+		} catch (error) {
+			setConnectError(error instanceof Error ? error.message : "프로젝트 생성에 실패했습니다.");
+		} finally {
 			setIsGenerating(false);
-			setGeneratedUrl(`https://artify.app/${Math.random().toString(36).substring(7)}`);
-		}, 3000);
+		}
 	};
 
 	const handleResetConnect = () => {
 		setGeneratedUrl(null);
 		setUrlInput("");
+		setProjectName("");
+		setSubdomain("");
 		setSelectedFile(null);
 		setUploadStatus("idle");
 		setUploadProgress(0);
@@ -241,7 +386,18 @@ const App: React.FC = () => {
 
 	const handleLogin = (e: React.FormEvent) => {
 		e.preventDefault();
-		setCurrentView(ViewID.ANALYTICS);
+		// 이메일/비밀번호 로그인은 현재 미지원 - Google OAuth만 지원
+		setConnectError("현재는 Google 계정으로만 로그인이 가능합니다.");
+	};
+
+	const handleGoogleLogin = () => {
+		login(); // Google OAuth 로그인 시작
+	};
+
+	const handleLogout = () => {
+		logout();
+		setCurrentView(ViewID.CONNECT);
+		handleResetConnect();
 	};
 
 	// --- RENDERING VIEWS ---
@@ -323,7 +479,13 @@ const App: React.FC = () => {
 								ARTIFY Intelligence로 실시간 수집됩니다.
 							</p>
 							<div className="grid grid-cols-2 gap-4">
-								<button onClick={() => setCurrentView(ViewID.LOGIN)} className="w-full bg-indigo-600 text-white py-4.5 rounded-2xl font-black text-md hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95">
+								<button onClick={() => {
+									if (isAuthenticated && currentProject) {
+										setCurrentView(ViewID.ANALYTICS);
+									} else {
+										setCurrentView(ViewID.LOGIN);
+									}
+								}} className="w-full bg-indigo-600 text-white py-4.5 rounded-2xl font-black text-md hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95">
 									대시보드 보기
 								</button>
 								<button onClick={handleResetConnect} className="w-full bg-white border border-slate-200 text-slate-600 py-4.5 rounded-2xl font-black text-md hover:bg-slate-50 transition-all active:scale-95">
@@ -334,18 +496,27 @@ const App: React.FC = () => {
 					) : (
 						<>
 							{connectMode === "url" ? (
-								<div className="space-y-6 animate-reveal">
+								<div className="space-y-4 animate-reveal">
 									<div className="relative group">
 										<div className="absolute inset-y-0 left-6 flex items-center pointer-events-none text-slate-400 group-focus-within:text-indigo-600 transition-colors">
 											<Globe size={22} />
 										</div>
-										<input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://your-site.com" className="w-full pl-16 pr-6 py-6 bg-slate-50 border-2 border-slate-100 rounded-[2rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner text-lg" />
+										<input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://your-site.com" className="w-full pl-16 pr-6 py-5 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
 									</div>
-									<button onClick={handleGenerateFromUrl} disabled={isGenerating} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl tracking-tight hover:bg-slate-800 transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 shadow-2xl shadow-slate-900/10">
+									<div className="grid grid-cols-2 gap-4">
+										<input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="프로젝트 이름" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
+										<input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="서브도메인 (선택)" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
+									</div>
+									<button onClick={handleGenerateFromUrl} disabled={isGenerating || !isAuthenticated} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl tracking-tight hover:bg-slate-800 transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 shadow-2xl shadow-slate-900/10">
 										{isGenerating ? (
 											<>
 												<Loader2 size={24} className="animate-spin" />
 												분석 정보 동기화 중...
+											</>
+										) : !isAuthenticated ? (
+											<>
+												<Lock size={22} />
+												로그인 후 이용 가능
 											</>
 										) : (
 											<>
@@ -353,6 +524,12 @@ const App: React.FC = () => {
 											</>
 										)}
 									</button>
+									{!isAuthenticated && (
+										<button onClick={handleGoogleLogin} className="w-full border-2 border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
+											<img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
+											Google 계정으로 로그인
+										</button>
+									)}
 								</div>
 							) : (
 								<div className="space-y-6 animate-reveal">
@@ -411,7 +588,7 @@ const App: React.FC = () => {
 													</div>
 												</div>
 											) : (
-												<div className="space-y-6">
+												<div className="space-y-5">
 													<div className="p-5 bg-indigo-50/50 rounded-2xl border border-indigo-100 flex items-center gap-4 text-left">
 														<div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center shrink-0 shadow-lg shadow-indigo-100">
 															<FileCode size={20} />
@@ -421,11 +598,21 @@ const App: React.FC = () => {
 															<p className="text-[11px] font-bold text-slate-400 mt-0.5">정적 사이트 구조가 유효하며 최적화 준비가 되었습니다.</p>
 														</div>
 													</div>
-													<button onClick={handleGenerateFromFile} disabled={isGenerating} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl tracking-tight hover:bg-slate-800 transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 shadow-2xl shadow-slate-900/10">
+													<div className="grid grid-cols-2 gap-4">
+														<input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="프로젝트 이름 *" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
+														<input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="서브도메인 *" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
+													</div>
+													<p className="text-[11px] font-bold text-slate-400 text-left">* 생성될 주소: <span className="text-indigo-600">{subdomain || 'your-site'}.artify.page</span></p>
+													<button onClick={handleGenerateFromFile} disabled={isGenerating || !isAuthenticated} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl tracking-tight hover:bg-slate-800 transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 shadow-2xl shadow-slate-900/10">
 														{isGenerating ? (
 															<>
 																<Loader2 size={24} className="animate-spin" />
 																통계 인프라 구축 중...
+															</>
+														) : !isAuthenticated ? (
+															<>
+																<Lock size={22} />
+																로그인 후 이용 가능
 															</>
 														) : (
 															<>
@@ -433,6 +620,12 @@ const App: React.FC = () => {
 															</>
 														)}
 													</button>
+													{!isAuthenticated && (
+														<button onClick={handleGoogleLogin} className="w-full border-2 border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
+															<img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
+															Google 계정으로 로그인
+														</button>
+													)}
 												</div>
 											)}
 										</div>
@@ -588,7 +781,7 @@ const App: React.FC = () => {
 							<span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">or continue with</span>
 							<div className="flex-1 h-px bg-slate-100"></div>
 						</div>
-						<button type="button" className="w-full border border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
+						<button type="button" onClick={handleGoogleLogin} className="w-full border border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
 							<img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
 							Google 계정으로 계속하기
 						</button>
@@ -643,8 +836,68 @@ const App: React.FC = () => {
 					<div className="animate-reveal">
 						<div className="flex items-center gap-2.5 text-indigo-600 font-black text-[11px] mb-2.5 uppercase tracking-[0.2em]">
 							<div className="w-2 h-2 rounded-full bg-indigo-600 animate-ping"></div>ARTIFY Statistical Analysis Engine
+							{realtimeData && (
+								<span className="ml-4 text-emerald-500 flex items-center gap-1.5">
+									<Activity size={12} /> {realtimeData.active_users} 실시간 사용자
+								</span>
+							)}
 						</div>
-						<h2 className="text-4xl font-black text-slate-900 tracking-tighter">{NAVIGATION_ITEMS.find(i => i.id === activeTab)?.label || "ARTIFY Intelligence Suite"}</h2>
+						<div className="flex items-center gap-4">
+							<h2 className="text-4xl font-black text-slate-900 tracking-tighter">{NAVIGATION_ITEMS.find(i => i.id === activeTab)?.label || "ARTIFY Intelligence Suite"}</h2>
+							{/* 프로젝트 선택기 */}
+							{projects.length > 0 && (
+								<div className="relative">
+									<button
+										onClick={() => setShowProjectSelector(!showProjectSelector)}
+										className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-bold text-slate-600 transition-colors"
+									>
+										<Globe size={16} />
+										{currentProject?.name || '프로젝트 선택'}
+										<ChevronDown size={16} className={`transition-transform ${showProjectSelector ? 'rotate-180' : ''}`} />
+									</button>
+									{showProjectSelector && (
+										<div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-2xl border border-slate-200 shadow-2xl z-50 overflow-hidden">
+											<div className="p-2 border-b border-slate-100">
+												<p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">프로젝트 목록</p>
+											</div>
+											<div className="max-h-60 overflow-auto">
+												{projects.map(project => (
+													<button
+														key={project.id}
+														onClick={() => {
+															selectProject(project);
+															setShowProjectSelector(false);
+														}}
+														className={`w-full px-4 py-3 text-left hover:bg-slate-50 transition-colors flex items-center justify-between ${
+															currentProject?.id === project.id ? 'bg-indigo-50' : ''
+														}`}
+													>
+														<div>
+															<p className="text-sm font-bold text-slate-700">{project.name}</p>
+															<p className="text-[10px] text-slate-400">{project.full_domain}</p>
+														</div>
+														{currentProject?.id === project.id && (
+															<Check size={16} className="text-indigo-600" />
+														)}
+													</button>
+												))}
+											</div>
+											<div className="p-2 border-t border-slate-100">
+												<button
+													onClick={() => {
+														setShowProjectSelector(false);
+														setCurrentView(ViewID.CONNECT);
+													}}
+													className="w-full px-4 py-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors flex items-center gap-2"
+												>
+													<Sigma size={14} /> 새 프로젝트 추가
+												</button>
+											</div>
+										</div>
+									)}
+								</div>
+							)}
+						</div>
 					</div>
 					<div className="flex flex-col sm:flex-row gap-3.5 items-center">
 						<div className="flex items-center bg-white border border-slate-200 rounded-[1.5rem] shadow-sm p-1.5 gap-2">
@@ -728,7 +981,37 @@ const App: React.FC = () => {
 				</div>
 			)}
 
-			<div className="flex-1">{renderTabContentBody()}</div>
+			<div className="flex-1">
+				{!currentProject && !isBillingPage ? (
+					<div className="flex flex-col items-center justify-center py-20 text-center">
+						<div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center mb-6">
+							<Globe size={40} className="text-slate-300" />
+						</div>
+						<h3 className="text-2xl font-black text-slate-900 mb-3">프로젝트를 선택하세요</h3>
+						<p className="text-slate-500 mb-8 max-w-md">
+							분석할 프로젝트를 선택하거나 새 프로젝트를 추가하여 웹사이트 분석을 시작하세요.
+						</p>
+						<div className="flex gap-4">
+							{projects.length > 0 && (
+								<button
+									onClick={() => selectProject(projects[0])}
+									className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-colors"
+								>
+									첫 번째 프로젝트 선택
+								</button>
+							)}
+							<button
+								onClick={() => setCurrentView(ViewID.CONNECT)}
+								className="px-6 py-3 bg-slate-100 text-slate-600 rounded-2xl font-black hover:bg-slate-200 transition-colors flex items-center gap-2"
+							>
+								<Sigma size={18} /> 새 프로젝트 추가
+							</button>
+						</div>
+					</div>
+				) : (
+					renderTabContentBody()
+				)}
+			</div>
 
 			<Footer />
 		</div>
@@ -743,11 +1026,17 @@ const App: React.FC = () => {
 			case TabID.OVERVIEW:
 				return (
 					<div className="space-y-7 animate-reveal">
+						{isAnalyticsLoading && (
+							<div className="flex items-center justify-center py-4">
+								<Loader2 size={24} className="animate-spin text-indigo-600" />
+								<span className="ml-2 text-sm font-bold text-slate-500">데이터 로딩 중...</span>
+							</div>
+						)}
 						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-							<MetricCard title="총 방문자 수" value={getScaledValue(124532).toLocaleString()} change={12.5} description="선택한 기간 동안 사이트를 방문한 총 순 방문자 수입니다." icon={<Users size={18} />} />
-							<MetricCard title="일평균 방문자" value={Math.floor(getScaledValue(124532) / (timeRange === TimeRange.YEAR ? 365 : chartData.length)).toLocaleString()} change={2.1} description="해당 기간 내 하루 평균 유입되는 활성 방문자 수의 평균값입니다." icon={<Activity size={18} />} />
-							<MetricCard title="평균 체류시간" value="04:22" change={5.8} description="사용자가 사이트에 머무르는 평균 시간으로 몰입도를 나타냅니다." icon={<Clock size={18} />} />
-							<MetricCard title="신규 방문 비중" value="34.6" suffix="%" change={-1.2} description="전체 유입 중 서비스에 처음 접속한 신규 유입의 비율입니다." icon={<UserPlus size={18} />} />
+							<MetricCard title="총 방문자 수" value={displayMetrics.totalVisitors.toLocaleString()} change={12.5} description="선택한 기간 동안 사이트를 방문한 총 순 방문자 수입니다." icon={<Users size={18} />} />
+							<MetricCard title="일평균 방문자" value={displayMetrics.dailyAverage.toLocaleString()} change={2.1} description="해당 기간 내 하루 평균 유입되는 활성 방문자 수의 평균값입니다." icon={<Activity size={18} />} />
+							<MetricCard title="평균 체류시간" value={formatSessionTime(displayMetrics.avgSessionTime)} change={5.8} description="사용자가 사이트에 머무르는 평균 시간으로 몰입도를 나타냅니다." icon={<Clock size={18} />} />
+							<MetricCard title="이탈률" value={displayMetrics.bounceRate.toFixed(1)} suffix="%" change={-1.2} description="첫 페이지만 보고 이탈한 방문자의 비율입니다." icon={<TrendingDown size={18} />} />
 						</div>
 						<div className="grid grid-cols-1 lg:grid-cols-3 gap-7">
 							<div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group">
@@ -946,7 +1235,7 @@ const App: React.FC = () => {
 									<div className="w-24 h-24 bg-indigo-50 rounded-[2rem] flex items-center justify-center text-indigo-500 mb-4 transition-all group-hover:scale-110 group-hover:shadow-xl group-hover:shadow-indigo-100">
 										<Smartphone size={48} />
 									</div>
-									<p className="text-3xl font-black text-slate-900 tracking-tighter">62%</p>
+									<p className="text-3xl font-black text-slate-900 tracking-tighter">{displayMetrics.mobileRatio.toFixed(0)}%</p>
 									<p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Mobile</p>
 								</div>
 								<div className="w-px h-24 bg-slate-100"></div>
@@ -954,7 +1243,7 @@ const App: React.FC = () => {
 									<div className="w-24 h-24 bg-slate-50 rounded-[2rem] flex items-center justify-center text-slate-400 mb-4 transition-all group-hover:scale-110 group-hover:bg-indigo-50 group-hover:text-indigo-500">
 										<Monitor size={48} />
 									</div>
-									<p className="text-3xl font-black text-slate-900 tracking-tighter">38%</p>
+									<p className="text-3xl font-black text-slate-900 tracking-tighter">{displayMetrics.desktopRatio.toFixed(0)}%</p>
 									<p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Desktop</p>
 								</div>
 							</div>
@@ -1204,15 +1493,41 @@ const App: React.FC = () => {
 				<span className="text-lg font-black tracking-tighter text-slate-900 uppercase">ARTIFY</span>
 			</div>
 			<div className="flex items-center gap-6">
-				{currentView !== ViewID.ANALYTICS && (
+				{currentView !== ViewID.ANALYTICS && !isAuthenticated && (
 					<button onClick={() => setCurrentView(currentView === ViewID.LOGIN ? ViewID.CONNECT : ViewID.LOGIN)} className="text-sm font-black text-slate-500 hover:text-indigo-600 transition-colors">
 						{currentView === ViewID.LOGIN ? "서비스 연결" : "로그인"}
 					</button>
 				)}
-				{currentView === ViewID.ANALYTICS && (
+				{isAuthenticated && (
 					<div className="flex items-center gap-4">
-						<span className="text-xs font-bold text-slate-400">mason@artify.com</span>
-						<div className="w-8 h-8 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 font-black text-[10px]">M</div>
+						{user?.picture ? (
+							<img src={user.picture} alt={user.name} className="w-8 h-8 rounded-full" />
+						) : (
+							<div className="w-8 h-8 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 font-black text-[10px]">
+								{user?.name?.charAt(0).toUpperCase() || 'U'}
+							</div>
+						)}
+						<span className="text-xs font-bold text-slate-400">{user?.email}</span>
+						{currentView !== ViewID.ANALYTICS && projects.length > 0 && (
+							<button
+								onClick={() => {
+									if (projects.length > 0 && !currentProject) {
+										selectProject(projects[0]);
+									}
+									setCurrentView(ViewID.ANALYTICS);
+								}}
+								className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 transition-colors"
+							>
+								대시보드
+							</button>
+						)}
+						<button
+							onClick={handleLogout}
+							className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
+							title="로그아웃"
+						>
+							<LogOut size={18} />
+						</button>
 					</div>
 				)}
 			</div>
