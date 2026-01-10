@@ -2,17 +2,35 @@
 import React from 'react';
 import { NAVIGATION_ITEMS } from '../constants';
 import { TabID, UserSubscription } from '../types';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, LogOut, User } from 'lucide-react';
+
+interface UserInfo {
+  email: string;
+  name: string;
+  picture?: string;
+}
 
 interface SidebarProps {
   activeTab: TabID;
   onTabChange: (tab: TabID) => void;
   subscription: UserSubscription;
+  user?: UserInfo | null;
+  onLogout?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription, user, onLogout }) => {
   const usagePercent = Math.min(100, (subscription.usage_current_period / subscription.request_limit) * 100);
   const isBillingTab = activeTab.startsWith('billing');
+
+  // 숫자를 K/M 단위로 포맷
+  const formatNumber = (num: number): string => {
+    if (num >= 1000000) {
+      return `${(num / 1000000).toFixed(1)}M`;
+    } else if (num >= 1000) {
+      return `${(num / 1000).toFixed(0)}K`;
+    }
+    return num.toString();
+  };
 
   // 사용량에 따른 색상 결정 (초록 < 50% < 파랑 < 85% < 빨강)
   const getUsageColorClass = () => {
@@ -66,7 +84,39 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription 
         })}
       </nav>
 
-      <div className="p-5">
+      {/* 사용자 정보 & 로그아웃 */}
+      {user && (
+        <div className="px-5 pb-3">
+          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
+            {user.picture ? (
+              <img
+                src={user.picture}
+                alt={user.name}
+                className="w-9 h-9 rounded-full object-cover border-2 border-white shadow-sm"
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center">
+                <User size={18} className="text-indigo-600" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-slate-900 truncate">{user.name}</p>
+              <p className="text-[10px] text-slate-500 truncate">{user.email}</p>
+            </div>
+            {onLogout && (
+              <button
+                onClick={onLogout}
+                className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all duration-200"
+                title="로그아웃"
+              >
+                <LogOut size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="p-5 pt-2">
         <div className="bg-slate-900 rounded-[1.75rem] p-5 text-white relative overflow-hidden group/card shadow-xl">
           <div className="absolute -top-10 -right-10 w-28 h-28 bg-indigo-500/10 rounded-full blur-3xl group-hover/card:scale-150 transition-transform duration-1000"></div>
           
@@ -84,7 +134,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription 
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[9px] font-bold text-slate-400">
-                {(subscription.usage_current_period / 1000000).toFixed(1)}M / {(subscription.request_limit / 1000000).toFixed(0)}M 건
+                {formatNumber(subscription.usage_current_period)} / {formatNumber(subscription.request_limit)} 건
               </span>
               <span className={`text-[9px] font-black ${getUsageTextColorClass()}`}>{usagePercent.toFixed(0)}%</span>
             </div>

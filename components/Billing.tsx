@@ -14,12 +14,13 @@ const PLANS = [
     id: 'free' as PlanID,
     name: 'Free',
     price: '0',
-    limit: '1,000,000',
+    limit: '100,000',
     features: ['기본 분석 도구', '표준 기술 지원', '일간 요약 리포트', '커뮤니티 액세스'],
     color: 'bg-slate-100',
     textColor: 'text-slate-600',
     buttonColor: 'bg-slate-800',
-    description: '개인 프로젝트와 학습을 위한 완벽한 시작'
+    description: '개인 프로젝트와 학습을 위한 완벽한 시작',
+    comingSoon: false
   },
   {
     id: 'pro' as PlanID,
@@ -32,7 +33,8 @@ const PLANS = [
     buttonColor: 'bg-white',
     buttonTextColor: 'text-indigo-600',
     isPopular: true,
-    description: '성장하는 비즈니스를 위한 업계 표준 선택'
+    description: '성장하는 비즈니스를 위한 업계 표준 선택',
+    comingSoon: true
   },
   {
     id: 'enterprise' as PlanID,
@@ -44,7 +46,8 @@ const PLANS = [
     textColor: 'text-slate-900',
     buttonColor: 'bg-slate-900',
     buttonTextColor: 'text-white',
-    description: '대규모 트래픽과 보안이 필요한 조직을 위한 솔루션'
+    description: '대규모 트래픽과 보안이 필요한 조직을 위한 솔루션',
+    comingSoon: true
   }
 ];
 
@@ -62,17 +65,23 @@ export const BillingUpgrade: React.FC<BillingViewProps> = ({ subscription, onNav
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
         {PLANS.map((plan) => {
           const isCurrent = subscription.plan_id === plan.id;
-          const isDowngrade = (subscription.plan_id === 'enterprise' && plan.id !== 'enterprise') || 
+          const isDowngrade = (subscription.plan_id === 'enterprise' && plan.id !== 'enterprise') ||
                               (subscription.plan_id === 'pro' && plan.id === 'free');
+          const isComingSoon = plan.comingSoon;
 
           return (
-            <div 
-              key={plan.id} 
+            <div
+              key={plan.id}
               className={`relative rounded-[2.5rem] p-10 flex flex-col border transition-all duration-500 hover:scale-[1.02] ${
                 plan.isPopular ? 'border-indigo-500 shadow-2xl shadow-indigo-100' : 'border-slate-200 shadow-sm'
-              } ${plan.color} ${plan.textColor}`}
+              } ${plan.color} ${plan.textColor} ${isComingSoon ? 'opacity-75' : ''}`}
             >
-              {plan.isPopular && (
+              {isComingSoon && (
+                <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-amber-500 text-white text-[10px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full z-10">
+                  추후 오픈
+                </div>
+              )}
+              {plan.isPopular && !isComingSoon && (
                 <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest px-4 py-1.5 rounded-full z-10">
                   인기 플랜
                 </div>
@@ -102,15 +111,15 @@ export const BillingUpgrade: React.FC<BillingViewProps> = ({ subscription, onNav
               </ul>
 
               <button
-                disabled={isCurrent || isDowngrade}
+                disabled={isCurrent || isDowngrade || isComingSoon}
                 onClick={() => onSelectPlan(plan.id)}
                 className={`w-full py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all active:scale-95 ${
                   plan.buttonColor
                 } ${plan.buttonTextColor || 'text-white'} ${
-                  (isCurrent || isDowngrade) ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90 shadow-xl'
+                  (isCurrent || isDowngrade || isComingSoon) ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90 shadow-xl'
                 }`}
               >
-                {isCurrent ? '현재 이용 중인 플랜' : isDowngrade ? '관리 포털에서 변경' : `${plan.name}로 업그레이드`}
+                {isComingSoon ? '준비 중' : isCurrent ? '현재 이용 중인 플랜' : isDowngrade ? '관리 포털에서 변경' : `${plan.name}로 업그레이드`}
               </button>
             </div>
           );

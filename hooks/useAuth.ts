@@ -77,25 +77,19 @@ export function useAuth(): UseAuthReturn {
     });
   }, []);
 
-  // OAuth 콜백 처리 (URL에서 토큰 추출)
+  // OAuth 콜백 처리 및 초기 인증 상태 확인 (중복 호출 방지를 위해 하나의 useEffect로 통합)
   useEffect(() => {
-    const handleOAuthCallback = () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const token = urlParams.get('access_token');
+    const urlParams = new URLSearchParams(window.location.search);
+    // access_token 또는 token 파라미터 모두 지원
+    const token = urlParams.get('access_token') || urlParams.get('token');
 
-      if (token) {
-        setAccessToken(token);
-        // URL에서 토큰 파라미터 제거
-        window.history.replaceState({}, document.title, window.location.pathname);
-        checkAuth();
-      }
-    };
+    if (token) {
+      setAccessToken(token);
+      // URL에서 토큰 파라미터 제거
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
 
-    handleOAuthCallback();
-  }, [checkAuth]);
-
-  // 초기 인증 상태 확인
-  useEffect(() => {
+    // 토큰 저장 후 인증 상태 확인 (OAuth 콜백이든 기존 토큰이든 한 번만 호출)
     checkAuth();
   }, [checkAuth]);
 

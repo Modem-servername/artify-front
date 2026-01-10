@@ -9,7 +9,11 @@ import {
   AnalyticsSummary,
   PageAnalytics,
   RealtimeAnalytics,
-  HeatmapData
+  HeatmapData,
+  TrendData,
+  PerformanceData,
+  GoalStats,
+  WebPerformanceStats
 } from '../services/api';
 
 interface AnalyticsState {
@@ -17,6 +21,10 @@ interface AnalyticsState {
   pageAnalytics: PageAnalytics | null;
   realtime: RealtimeAnalytics | null;
   heatmap: HeatmapData | null;
+  trend: TrendData | null;
+  performance: PerformanceData | null;
+  goals: GoalStats | null;
+  webPerformance: WebPerformanceStats | null;
   isLoading: boolean;
   error: string | null;
 }
@@ -26,6 +34,10 @@ interface UseAnalyticsReturn extends AnalyticsState {
   fetchPageAnalytics: (projectId: string, pagePath: string, days?: number) => Promise<void>;
   fetchRealtime: (projectId: string) => Promise<void>;
   fetchHeatmap: (projectId: string, pagePath: string, days?: number) => Promise<void>;
+  fetchTrend: (projectId: string, days?: number) => Promise<void>;
+  fetchPerformance: (projectId: string, strategy?: string) => Promise<void>;
+  fetchGoals: (projectId: string, days?: number) => Promise<void>;
+  fetchWebPerformance: (projectId: string, days?: number) => Promise<void>;
   clearAnalytics: () => void;
 }
 
@@ -35,6 +47,10 @@ export function useAnalytics(): UseAnalyticsReturn {
     pageAnalytics: null,
     realtime: null,
     heatmap: null,
+    trend: null,
+    performance: null,
+    goals: null,
+    webPerformance: null,
     isLoading: false,
     error: null,
   });
@@ -121,6 +137,86 @@ export function useAnalytics(): UseAnalyticsReturn {
     }
   }, []);
 
+  // 트렌드 데이터 조회
+  const fetchTrend = useCallback(async (projectId: string, days: number = 30) => {
+    setState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      const trend = await analyticsApi.getTrend(projectId, days);
+      setState(prev => ({
+        ...prev,
+        trend,
+        isLoading: false,
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch trend data',
+      }));
+    }
+  }, []);
+
+  // 성능 데이터 조회
+  const fetchPerformance = useCallback(async (projectId: string, strategy: string = "mobile") => {
+    setState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      const performance = await analyticsApi.getPerformance(projectId, strategy);
+      setState(prev => ({
+        ...prev,
+        performance,
+        isLoading: false,
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch performance data',
+      }));
+    }
+  }, []);
+
+  // 목표 달성 통계 조회
+  const fetchGoals = useCallback(async (projectId: string, days: number = 30) => {
+    setState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      const goals = await analyticsApi.getGoals(projectId, days);
+      setState(prev => ({
+        ...prev,
+        goals,
+        isLoading: false,
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch goals data',
+      }));
+    }
+  }, []);
+
+  // 웹 성능 통계 조회 (자체 수집)
+  const fetchWebPerformance = useCallback(async (projectId: string, days: number = 30) => {
+    setState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      const webPerformance = await analyticsApi.getPerformanceStats(projectId, days);
+      setState(prev => ({
+        ...prev,
+        webPerformance,
+        isLoading: false,
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch web performance data',
+      }));
+    }
+  }, []);
+
   // 분석 데이터 초기화
   const clearAnalytics = useCallback(() => {
     setState({
@@ -128,6 +224,10 @@ export function useAnalytics(): UseAnalyticsReturn {
       pageAnalytics: null,
       realtime: null,
       heatmap: null,
+      trend: null,
+      performance: null,
+      goals: null,
+      webPerformance: null,
       isLoading: false,
       error: null,
     });
@@ -139,6 +239,10 @@ export function useAnalytics(): UseAnalyticsReturn {
     fetchPageAnalytics,
     fetchRealtime,
     fetchHeatmap,
+    fetchTrend,
+    fetchPerformance,
+    fetchGoals,
+    fetchWebPerformance,
     clearAnalytics,
   };
 }

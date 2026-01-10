@@ -122,15 +122,20 @@ export const userApi = {
 
 // ============ 프로젝트 API ============
 
+export type ProjectStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'ERROR';
+
 export interface Project {
   id: string;
   name: string;
   description: string | null;
   source_type: 'URL' | 'ZIP';
   source_url: string | null;
+  hosting_mode?: 'STATIC' | 'REDIRECT';  // STATIC: 정적 호스팅, REDIRECT: 원본 URL로 리다이렉트
   subdomain: string;
   full_domain: string;
   ga_tracking_id: string;
+  status: ProjectStatus;
+  status_message: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -144,6 +149,7 @@ export interface CreateProjectFromUrlRequest {
   source_url: string;
   description?: string;
   custom_subdomain?: string;
+  hosting_mode?: 'STATIC' | 'REDIRECT';  // STATIC: 정적 호스팅, REDIRECT: 원본 URL로 리다이렉트
 }
 
 export interface DeleteProjectResponse {
@@ -199,6 +205,19 @@ export const projectApi = {
     apiRequest<DeleteProjectResponse>(`/api/projects/${projectId}`, {
       method: 'DELETE',
     }),
+
+  // URL 프로젝트 다시 가져오기 (re-crawl)
+  recrawlProject: (projectId: string) =>
+    apiRequest<{ message: string }>(`/api/projects/${projectId}/recrawl`, {
+      method: 'POST',
+    }),
+
+  // ZIP 프로젝트 재배포
+  redeployProject: (projectId: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return apiRequestFormData<{ message: string }>(`/api/projects/${projectId}/redeploy`, formData);
+  },
 };
 
 // ============ 분석 API ============
@@ -229,6 +248,40 @@ export interface Geography {
   users: number;
 }
 
+export interface ComparisonData {
+  current: {
+    total_visitors: number;
+    sessions: number;
+    avg_session_time: number;
+    bounce_rate: number;
+  };
+  previous: {
+    total_visitors: number;
+    sessions: number;
+    avg_session_time: number;
+    bounce_rate: number;
+  };
+  changes: {
+    total_visitors: number;
+    sessions: number;
+    avg_session_time: number;
+    bounce_rate: number;
+  };
+}
+
+export interface BrowserOsData {
+  browsers: Array<{ name: string; users: number; percentage: number }>;
+  operating_systems: Array<{ name: string; users: number; percentage: number }>;
+}
+
+export interface NewVsReturning {
+  total_users: number;
+  new_users: number;
+  returning_users: number;
+  new_ratio: number;
+  returning_ratio: number;
+}
+
 export interface AnalyticsSummary {
   total_visitors: number;
   total_page_views: number;
@@ -248,6 +301,9 @@ export interface AnalyticsSummary {
   traffic_sources: TrafficSource[];
   geography: Geography[];
   period_days: number;
+  comparison: ComparisonData;
+  browser_os: BrowserOsData;
+  new_vs_returning: NewVsReturning;
 }
 
 export interface PageAnalytics {
@@ -266,35 +322,223 @@ export interface RealtimeAnalytics {
 export interface HeatmapClick {
   x: number;
   y: number;
-  page_path: string; // 각 클릭에 page_path 포함
+  x_percent: number;
+  y_percent: number;
   timestamp: string;
 }
 
+export interface HeatmapSpot {
+  x_percent: number;
+  y_percent: number;
+  clicks: number;
+  element_id: string;
+}
+
 export interface HeatmapData {
+  page_path: string;
   total_clicks: number;
+  heatmap_spots: HeatmapSpot[];
   clicks: HeatmapClick[];
 }
 
+export interface TrendDataPoint {
+  date: string;
+  visits: number;
+  sessions: number;
+  pageViews: number;
+  bounceRate: number;
+  avgSessionDuration: number;
+}
+
+export interface HourlyDataPoint {
+  name: string;
+  visits: number;
+  sessions: number;
+}
+
+export interface TrendData {
+  daily_trend: TrendDataPoint[];
+  hourly_trend: HourlyDataPoint[];
+  period_days: number;
+}
+
 export const analyticsApi = {
-  // 전체 통계 요약
+  // 전체 통계 요약 (자체 수집 데이터)
   getSummary: (projectId: string, days: number = 30) =>
-    apiRequest<AnalyticsSummary>(`/api/analytics/summary/${projectId}?days=${days}`),
+    apiRequest<AnalyticsSummary>(`/api/analytics/${projectId}/overview?days=${days}`),
 
-  // 페이지별 상세 분석
-  getPageAnalytics: (projectId: string, pagePath: string, days: number = 30) =>
-    apiRequest<PageAnalytics>(
-      `/api/analytics/page/${projectId}?page_path=${encodeURIComponent(pagePath)}&days=${days}`
-    ),
-
-  // 실시간 사용자 수
-  getRealtime: (projectId: string) =>
-    apiRequest<RealtimeAnalytics>(`/api/analytics/realtime/${projectId}`),
+  // 트렌드 데이터 조회 (일별/시간별)
+  getTrend: (projectId: string, days: number = 30) =>
+    apiRequest<TrendData>(`/api/analytics/${projectId}/trend?days=${days}`),
 
   // 히트맵 데이터 조회
   getHeatmap: (projectId: string, pagePath: string, days: number = 30) =>
     apiRequest<HeatmapData>(
-      `/api/analytics/heatmap/${projectId}?page_path=${encodeURIComponent(pagePath)}&days=${days}`
+      `/api/analytics/${projectId}/heatmap?page_path=${encodeURIComponent(pagePath)}&days=${days}`
     ),
+
+  // 유입 경로 통계
+  getTrafficSources: (projectId: string, days: number = 30) =>
+    apiRequest<{ traffic_sources: TrafficSource[] }>(
+      `/api/analytics/${projectId}/traffic-sources?days=${days}`
+    ),
+
+  // 검색 키워드 통계
+  getKeywords: (projectId: string, days: number = 30) =>
+    apiRequest<{ keywords: Array<{ keyword: string; count: number; visitors: number }> }>(
+      `/api/analytics/${projectId}/keywords?days=${days}`
+    ),
+
+  // 기기 환경 통계
+  getDevices: (projectId: string, days: number = 30) =>
+    apiRequest<DeviceStats>(`/api/analytics/${projectId}/devices?days=${days}`),
+
+  // 브라우저/OS 통계
+  getBrowserOs: (projectId: string, days: number = 30) =>
+    apiRequest<BrowserOsData>(`/api/analytics/${projectId}/browser-os?days=${days}`),
+
+  // 목표 달성 통계
+  getGoals: (projectId: string, days: number = 30) =>
+    apiRequest<GoalStats>(`/api/analytics/${projectId}/goals?days=${days}`),
+
+  // 웹 성능 통계 (자체 수집)
+  getPerformanceStats: (projectId: string, days: number = 30) =>
+    apiRequest<WebPerformanceStats>(`/api/analytics/${projectId}/performance?days=${days}`),
+
+  // 페이지별 상세 분석 (GA4)
+  getPageAnalytics: (projectId: string, pagePath: string, days: number = 30) =>
+    apiRequest<PageAnalytics>(`/api/analytics/page/${projectId}?page_path=${encodeURIComponent(pagePath)}&days=${days}`),
+
+  // 실시간 분석 데이터 (GA4)
+  getRealtime: (projectId: string) =>
+    apiRequest<RealtimeAnalytics>(`/api/analytics/realtime/${projectId}`),
+
+  // 성능 데이터 (PageSpeed Insights)
+  getPerformance: (projectId: string, strategy: string = 'mobile') =>
+    apiRequest<PerformanceData>(`/api/analytics/performance/${projectId}?strategy=${strategy}`),
+};
+
+// 기기 통계 타입
+export interface DeviceStats {
+  desktop: { count: number; percentage: number };
+  mobile: { count: number; percentage: number };
+  tablet: { count: number; percentage: number };
+  total: number;
+}
+
+// 목표 통계 타입
+export interface GoalStats {
+  total_conversions: number;
+  conversion_rate: number;
+  goals: Array<{
+    goal_name: string;
+    conversions: number;
+    total_value: number;
+    unique_visitors: number;
+    conversion_rate: number;
+  }>;
+}
+
+// 웹 성능 통계 타입
+export interface WebPerformanceStats {
+  lcp: number;
+  fid: number;
+  cls: number;
+  ttfb: number;
+  fcp: number;
+  page_load: number;
+  sample_count: number;
+  lcp_score: 'good' | 'needs_improvement' | 'poor' | 'unknown';
+  fid_score: 'good' | 'needs_improvement' | 'poor' | 'unknown';
+  cls_score: 'good' | 'needs_improvement' | 'poor' | 'unknown';
+}
+
+// 성능 데이터 타입
+export interface PerformanceMetric {
+  id: string;
+  label: string;
+  val: string;
+  status: string;
+  color: string;
+  desc: string;
+}
+
+export interface PerformanceOptimization {
+  label: string;
+  passed: boolean;
+}
+
+export interface PerformanceData {
+  performance_score: number;
+  metrics: PerformanceMetric[];
+  optimizations: PerformanceOptimization[];
+  strategy: string;
+  url: string;
+  error?: string;
+}
+
+// ============ Custom Goals API ============
+
+export type GoalType = 'visitors' | 'stay_time' | 'page_views' | 'bounce_rate' | 'sessions' | 'new_visitors';
+
+export interface CustomGoal {
+  id: string;
+  project_id: string;
+  name: string;
+  goal_type: GoalType;
+  target_value: number;
+  current_value: number;
+  progress: number;
+  period: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateGoalRequest {
+  name: string;
+  goal_type: GoalType;
+  target_value: number;
+  period?: string;
+}
+
+export const customGoalsApi = {
+  getGoals: (projectId: string) =>
+    apiRequest<CustomGoal[]>(`/api/projects/${projectId}/custom-goals`),
+
+  createGoal: (projectId: string, data: CreateGoalRequest) =>
+    apiRequest<CustomGoal>(`/api/projects/${projectId}/custom-goals`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteGoal: (projectId: string, goalId: string) =>
+    apiRequest<{ message: string }>(`/api/projects/${projectId}/custom-goals/${goalId}`, {
+      method: 'DELETE',
+    }),
+};
+
+// ============ 사용량 API ============
+
+export interface UsageStats {
+  credits_used: number;
+  credits_limit: number;
+  credits_remaining: number;
+  usage_percentage: number;
+  tier: string;
+  last_reset_at: string | null;
+  next_reset_at: string;
+  is_limit_exceeded: boolean;
+}
+
+export const usageApi = {
+  getUsage: () =>
+    apiRequest<UsageStats>('/api/usage'),
+
+  resetCredits: () =>
+    apiRequest<{ success: boolean; message: string; projects_reactivated: number }>('/api/usage/reset', {
+      method: 'POST',
+    }),
 };
 
 export default {
@@ -302,4 +546,6 @@ export default {
   user: userApi,
   project: projectApi,
   analytics: analyticsApi,
+  customGoals: customGoalsApi,
+  usage: usageApi,
 };

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { X, Printer, Download, FileText, CheckCircle2, TrendingUp, TrendingDown, Globe, Activity, Sparkles, Loader2 } from 'lucide-react';
 import { TabID, InsightResponse, TimeRange, CorrelationSignal } from '../types';
-import { NAVIGATION_ITEMS, MOCK_COUNTRIES } from '../constants';
+import { NAVIGATION_ITEMS } from '../constants';
 
 interface ReportModalProps {
   isOpen: boolean;

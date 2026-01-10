@@ -1,15 +1,15 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Sidebar from "./components/Sidebar";
 import { TabID, ViewID, InsightResponse, TimeRange, ChartDataPoint, UserSubscription, PlanID } from "./types";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Cell, PieChart, Pie } from "recharts";
-import { Users, Eye, Clock, Calendar, Globe, Smartphone, Zap, MousePointer2, Check, ChevronLeft, ChevronRight, RefreshCcw, ShieldCheck, Download, Layers, Activity, TrendingDown, ArrowUpRight, MousePointerClick, ShoppingCart, CreditCard, CheckCircle2, Timer, AlertTriangle, LayoutGrid, Monitor, Tablet, UserPlus, Sigma, Binary, Mail, Link as LinkIcon, Lock, ArrowRight, Copy, Sparkles, Loader2, MapPin, AlertCircle, Info, UploadCloud, FileArchive, FileCode, Trash2, X, LogOut, ChevronDown } from "lucide-react";
+import { Users, Eye, Clock, Calendar, Globe, Smartphone, Zap, MousePointer2, Check, ChevronLeft, ChevronRight, RefreshCcw, ShieldCheck, Download, Layers, Activity, TrendingDown, ArrowUpRight, MousePointerClick, ShoppingCart, CreditCard, CheckCircle2, Timer, AlertTriangle, LayoutGrid, Monitor, Tablet, UserPlus, Sigma, Binary, Mail, Link as LinkIcon, Lock, ArrowRight, Copy, Sparkles, Loader2, MapPin, AlertCircle, Info, UploadCloud, Upload, FileArchive, FileCode, Trash2, X, LogOut, ChevronDown, Target, Settings, Lightbulb } from "lucide-react";
 import MetricCard from "./components/MetricCard";
 import ReportModal from "./components/ReportModal";
 import { BillingUpgrade, BillingSuccess, BillingCancel } from "./components/Billing";
-import { MOCK_CHANNELS, MOCK_FUNNEL, MOCK_PAGE_VIEWS, MOCK_HEATMAP_DATA, NAVIGATION_ITEMS, MOCK_KEYWORDS, MOCK_COUNTRIES } from "./constants";
+import { NAVIGATION_ITEMS } from "./constants";
 import { generateLocalInsights } from "./services/insightGenerator";
 import { useAuth, useProjects, useAnalytics } from "./hooks";
-import { Project, AnalyticsSummary } from "./services/api";
+import { Project, AnalyticsSummary, CustomGoal, CreateGoalRequest, GoalType, customGoalsApi, usageApi, UsageStats, projectApi } from "./services/api";
 
 const App: React.FC = () => {
 	// API Hooks
@@ -29,21 +29,36 @@ const App: React.FC = () => {
 		summary: analyticsSummary,
 		heatmap: heatmapData,
 		realtime: realtimeData,
+		trend: trendData,
+		performance: performanceData,
+		goals: goalsData,
+		webPerformance: webPerformanceData,
 		isLoading: isAnalyticsLoading,
 		fetchSummary,
 		fetchHeatmap,
 		fetchRealtime,
+		fetchTrend,
+		fetchPerformance,
+		fetchGoals,
+		fetchWebPerformance,
 	} = useAnalytics();
 
-	// Navigation State
-	const [currentView, setCurrentView] = useState<ViewID>(ViewID.CONNECT);
-	const [activeTab, setActiveTab] = useState<TabID>(TabID.OVERVIEW);
+	// Navigation State - localStorage에서 복원
+	const [currentView, setCurrentView] = useState<ViewID>(() => {
+		const saved = localStorage.getItem('artify_currentView');
+		return saved ? (saved as ViewID) : ViewID.CONNECT;
+	});
+	const [activeTab, setActiveTab] = useState<TabID>(() => {
+		const saved = localStorage.getItem('artify_activeTab');
+		return saved ? (saved as TabID) : TabID.OVERVIEW;
+	});
 
 	// Connect View State
 	const [connectMode, setConnectMode] = useState<"url" | "file">("file");
 	const [urlInput, setUrlInput] = useState("");
 	const [projectName, setProjectName] = useState("");
 	const [subdomain, setSubdomain] = useState("");
+	const [hostingMode, setHostingMode] = useState<"STATIC" | "REDIRECT">("STATIC");  // 호스팅 모드
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
 	const [connectError, setConnectError] = useState<string | null>(null);
@@ -57,9 +72,6 @@ const App: React.FC = () => {
 	const [selectedFile, setSelectedFile] = useState<File | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
-	// Login View State
-	const [isLoginTab, setIsLoginTab] = useState(true);
-
 	// Dashboard State
 	const [timeRange, setTimeRange] = useState<TimeRange>(TimeRange.MONTH);
 	const [currentDate, setCurrentDate] = useState<Date>(new Date());
@@ -67,54 +79,277 @@ const App: React.FC = () => {
 	const [isInsightLoading, setIsInsightLoading] = useState(false);
 	const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 	const [isNavigating, setIsNavigating] = useState(false);
-	const [selectedHeatmapPage, setSelectedHeatmapPage] = useState<string>("/home");
+	const [selectedHeatmapPage, setSelectedHeatmapPage] = useState<string>("");
+	const [isRecrawling, setIsRecrawling] = useState(false);
+	const [showRedeployModal, setShowRedeployModal] = useState(false);
+	const [isRedeploying, setIsRedeploying] = useState(false);
+	const [redeployFile, setRedeployFile] = useState<File | null>(null);
 
-	// subscription은 user.tier 기반으로 동적으로 설정
+	// Toast 알림 상태
+	const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({ message: '', type: 'info', visible: false });
+
+	const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+		setToast({ message, type, visible: true });
+		setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 4000);
+	};
+
+	// 커스텀 목표 상태
+	const [customGoals, setCustomGoals] = useState<CustomGoal[]>([]);
+	const [isLoadingGoals, setIsLoadingGoals] = useState(false);
+	const [showGoalModal, setShowGoalModal] = useState(false);
+	const [newGoal, setNewGoal] = useState<CreateGoalRequest>({
+		name: '',
+		goal_type: 'visitors',
+		target_value: 1000,
+		period: 'daily'
+
+	});
+
+	// 사용량 상태
+	const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
+	const [isLoadingUsage, setIsLoadingUsage] = useState(false);
+	// 목표 유형별 기본값
+	const goalTypeDefaults: Record<GoalType, { defaultValue: number; unit: string; placeholder: string }> = {
+		visitors: { defaultValue: 1000, unit: '명', placeholder: '예: 1000' },
+		stay_time: { defaultValue: 120, unit: '초', placeholder: '예: 120' },
+		page_views: { defaultValue: 5000, unit: '회', placeholder: '예: 5000' },
+		bounce_rate: { defaultValue: 40, unit: '%', placeholder: '예: 40 (목표: 이하)' },
+		sessions: { defaultValue: 2000, unit: '회', placeholder: '예: 2000' },
+		new_visitors: { defaultValue: 500, unit: '명', placeholder: '예: 500' }
+	};
+
+	// 목표 유형 변경 시 기본값 설정
+	const handleGoalTypeChange = (type: GoalType) => {
+		setNewGoal(prev => ({
+			...prev,
+			goal_type: type,
+			target_value: goalTypeDefaults[type].defaultValue
+		}));
+	};
+
+	// D-Day 계산 함수
+	const calculateDDay = (period: string, createdAt: string): { dDay: number; targetDate: string } | null => {
+		if (period === 'unlimited') return null;
+
+		const created = new Date(createdAt);
+		const now = new Date();
+		let targetDate = new Date(created);
+
+		switch (period) {
+			case 'daily':
+				targetDate.setDate(created.getDate() + 1);
+				break;
+			case 'weekly':
+				targetDate.setDate(created.getDate() + 7);
+				break;
+			case 'monthly':
+				targetDate.setMonth(created.getMonth() + 1);
+				break;
+			default:
+				return null;
+		}
+
+		const diffTime = targetDate.getTime() - now.getTime();
+		const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+		return {
+			dDay: diffDays,
+			targetDate: targetDate.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })
+		};
+	};
+
+	// D-Day 표시 텍스트
+	const getDDayText = (dDay: number): string => {
+		if (dDay === 0) return 'D-Day';
+		if (dDay > 0) return `D-${dDay}`;
+		return `D+${Math.abs(dDay)}`;
+	};
+
+	// subscription은 usageStats 또는 user 정보 기반으로 동적으로 설정
 	const subscription = useMemo<UserSubscription>(() => {
 		const tierConfig: Record<string, { limit: number; plan: PlanID }> = {
-			FREE: { limit: 1000000, plan: "free" },
+			FREE: { limit: 100000, plan: "free" },
 			PRO: { limit: 5000000, plan: "pro" },
 			ENTERPRISE: { limit: 100000000, plan: "enterprise" },
 		};
-		const config = tierConfig[user?.tier || "FREE"] || tierConfig.FREE;
+		const tier = usageStats?.tier || user?.tier || "FREE";
+		const config = tierConfig[tier] || tierConfig.FREE;
 		return {
 			plan_id: config.plan,
-			request_limit: config.limit,
-			usage_current_period: 750000, // 실제로는 API에서 가져와야 함
-			subscription_status: "active",
-			billing_period_end: "2025-05-15",
+			request_limit: usageStats?.credits_limit || config.limit,
+			usage_current_period: usageStats?.credits_used || 0,
+			subscription_status: usageStats?.is_limit_exceeded ? "limit_exceeded" : "active",
+			billing_period_end: usageStats?.next_reset_at || new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0],
 		};
-	}, [user?.tier]);
+	}, [user, usageStats]);
+
+	// 상태 변경 시 localStorage에 저장
+	useEffect(() => {
+		localStorage.setItem('artify_currentView', currentView);
+	}, [currentView]);
+
+	useEffect(() => {
+		localStorage.setItem('artify_activeTab', activeTab);
+	}, [activeTab]);
 
 	// 인증 상태에 따른 뷰 전환
 	useEffect(() => {
 		if (!isAuthLoading) {
-			if (isAuthenticated && currentView === ViewID.LOGIN) {
-				setCurrentView(ViewID.ANALYTICS);
+			if (isAuthenticated) {
+				// 로그인 상태면 저장된 뷰 유지 (LOGIN이면 ANALYTICS로)
+				if (currentView === ViewID.LOGIN) {
+					setCurrentView(ViewID.ANALYTICS);
+				}
+				// CONNECT 페이지에서도 프로젝트가 있으면 ANALYTICS로 이동
+				// (단, 저장된 currentView가 ANALYTICS인 경우에만)
+				const savedView = localStorage.getItem('artify_currentView');
+				if (savedView === ViewID.ANALYTICS && currentView === ViewID.CONNECT) {
+					setCurrentView(ViewID.ANALYTICS);
+				}
 				fetchProjects();
+			} else {
+				// 로그아웃 상태면 로그인 또는 연결 페이지로
+				if (currentView === ViewID.ANALYTICS) {
+					setCurrentView(ViewID.CONNECT);
+				}
 			}
 		}
-	}, [isAuthenticated, isAuthLoading, currentView, fetchProjects]);
-
-	// 프로젝트 목록 조회 (인증된 경우)
-	useEffect(() => {
-		if (isAuthenticated) {
-			fetchProjects();
-		}
-	}, [isAuthenticated, fetchProjects]);
+	}, [isAuthenticated, isAuthLoading, fetchProjects]);
 
 	// 현재 프로젝트 분석 데이터 조회
 	useEffect(() => {
 		if (currentProject && currentView === ViewID.ANALYTICS) {
 			const days = timeRange === TimeRange.DAY ? 1 : timeRange === TimeRange.WEEK ? 7 : timeRange === TimeRange.MONTH ? 30 : 365;
 			fetchSummary(currentProject.id, days);
+			fetchTrend(currentProject.id, days);
+			fetchPerformance(currentProject.id, "mobile");
+			fetchGoals(currentProject.id, days);
+			fetchWebPerformance(currentProject.id, days);
 			if (selectedHeatmapPage) {
 				fetchHeatmap(currentProject.id, selectedHeatmapPage, days);
 			}
 			// 실시간 데이터는 주기적으로 조회
 			fetchRealtime(currentProject.id);
 		}
-	}, [currentProject, currentView, timeRange, selectedHeatmapPage, fetchSummary, fetchHeatmap, fetchRealtime]);
+	}, [currentProject, currentView, timeRange, selectedHeatmapPage, fetchSummary, fetchHeatmap, fetchRealtime, fetchTrend, fetchPerformance, fetchGoals, fetchWebPerformance]);
+
+	// 커스텀 목표 조회
+	const fetchCustomGoals = useCallback(async () => {
+		if (!currentProject) return;
+		setIsLoadingGoals(true);
+		try {
+			const goals = await customGoalsApi.getGoals(currentProject.id);
+			setCustomGoals(goals);
+		} catch (error) {
+			console.error('Failed to fetch custom goals:', error);
+		} finally {
+			setIsLoadingGoals(false);
+		}
+	}, [currentProject]);
+
+	useEffect(() => {
+		if (currentProject && currentView === ViewID.ANALYTICS) {
+			fetchCustomGoals();
+		}
+	}, [currentProject, currentView, fetchCustomGoals]);
+
+	// 사용량 조회
+	const fetchUsageStats = useCallback(async () => {
+		setIsLoadingUsage(true);
+		try {
+			const stats = await usageApi.getUsage();
+			setUsageStats(stats);
+		} catch (error) {
+			console.error('Failed to fetch usage stats:', error);
+		} finally {
+			setIsLoadingUsage(false);
+		}
+	}, []);
+
+	useEffect(() => {
+		if (isAuthenticated) {
+			fetchUsageStats();
+		}
+	}, [isAuthenticated, fetchUsageStats]);
+
+	// 목표 생성
+	const handleCreateGoal = async () => {
+		if (!currentProject || !newGoal.name) return;
+		try {
+			const created = await customGoalsApi.createGoal(currentProject.id, newGoal);
+			setCustomGoals(prev => [...prev, created]);
+			setShowGoalModal(false);
+			setNewGoal({ name: '', goal_type: 'visitors', target_value: 1000, period: 'daily' });
+			showToast('목표가 추가되었습니다.', 'success');
+		} catch (error) {
+			console.error('Failed to create goal:', error);
+			const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
+			showToast(`목표 추가 실패: ${errorMessage}`, 'error');
+		}
+	};
+
+	// 목표 삭제
+	const handleDeleteGoal = async (goalId: string) => {
+		if (!currentProject) return;
+		try {
+			await customGoalsApi.deleteGoal(currentProject.id, goalId);
+			setCustomGoals(prev => prev.filter(g => g.id !== goalId));
+			showToast('목표가 삭제되었습니다.', 'success');
+		} catch (error) {
+			console.error('Failed to delete goal:', error);
+			showToast('목표 삭제에 실패했습니다.', 'error');
+		}
+	};
+
+	// 목표 타입 라벨
+	const getGoalTypeLabel = (type: GoalType): string => {
+		const labels: Record<GoalType, string> = {
+			visitors: '일일 방문자',
+			stay_time: '평균 체류시간(초)',
+			page_views: '페이지뷰',
+			bounce_rate: '이탈률(%)',
+			sessions: '세션 수',
+			new_visitors: '신규 방문자'
+		};
+		return labels[type] || type;
+	};
+
+	// 목표 현재 값 계산
+	const getGoalCurrentValue = (goal: CustomGoal): number => {
+		if (!analyticsSummary) return 0;
+		switch (goal.goal_type) {
+			case 'visitors': return analyticsSummary.total_visitors;
+			case 'stay_time': return analyticsSummary.avg_session_time;
+			case 'page_views': return analyticsSummary.total_page_views;
+			case 'bounce_rate': return analyticsSummary.bounce_rate;
+			case 'sessions': return analyticsSummary.total_sessions;
+			case 'new_visitors': return analyticsSummary.new_vs_returning?.new_users || 0;
+			default: return 0;
+		}
+	};
+
+	// 목표 진행률 계산
+	const getGoalProgress = (goal: CustomGoal): number => {
+		const current = getGoalCurrentValue(goal);
+		// bounce_rate는 낮을수록 좋으므로 역으로 계산
+		if (goal.goal_type === 'bounce_rate') {
+			return Math.min(((goal.target_value / current) * 100), 100);
+		}
+		return Math.min((current / goal.target_value) * 100, 100);
+	};
+
+	// 목표 색상
+	const getGoalColor = (type: GoalType): string => {
+		const colors: Record<GoalType, string> = {
+			visitors: 'from-indigo-500 to-purple-500',
+			stay_time: 'from-emerald-500 to-teal-500',
+			page_views: 'from-blue-500 to-cyan-500',
+			bounce_rate: 'from-orange-500 to-red-500',
+			sessions: 'from-pink-500 to-rose-500',
+			new_visitors: 'from-violet-500 to-purple-500'
+		};
+		return colors[type] || 'from-gray-500 to-slate-500';
+	};
 
 	const isBillingPage = useMemo(() => {
 		return activeTab === TabID.BILLING_UPGRADE || activeTab === TabID.BILLING_SUCCESS || activeTab === TabID.BILLING_CANCEL;
@@ -150,35 +385,83 @@ const App: React.FC = () => {
 		setCurrentDate(newDate);
 	};
 
+	// 실제 GA4 트렌드 데이터 사용
 	const chartData = useMemo((): ChartDataPoint[] => {
-		const seed = currentDate.getTime() % 1000;
-		const getRandom = (i: number) => Math.floor(Math.abs(Math.sin(seed + i)) * 1000) + 200;
-		let length = 30;
-		let labelSuffix = "일";
-		if (timeRange === TimeRange.DAY) {
-			length = 24;
-			labelSuffix = "시";
-		} else if (timeRange === TimeRange.WEEK) {
-			const days = ["월", "화", "수", "목", "금", "토", "일"];
-			return days.map((day, i) => ({
-				name: day,
-				visits: getRandom(i) * 0.8,
-				conversions: Math.floor(getRandom(i) * 0.05),
-				stayTime: 150 + Math.random() * 50,
-				bounceRate: 40 + Math.random() * 10,
+		// timeRange에 따라 적절한 데이터 사용
+		if (timeRange === TimeRange.DAY && trendData?.hourly_trend) {
+			// 시간별 데이터
+			return trendData.hourly_trend.map((item) => ({
+				name: item.name,
+				visits: item.visits,
+				conversions: Math.floor(item.visits * 0.05), // 전환율 추정
+				stayTime: 180,
+				bounceRate: 40,
 			}));
-		} else if (timeRange === TimeRange.YEAR) {
-			length = 12;
-			labelSuffix = "월";
 		}
-		return Array.from({ length }, (_, i) => ({
-			name: `${i + 1}${labelSuffix}`,
-			visits: getRandom(i) * (timeRange === TimeRange.YEAR ? 15 : 3),
-			conversions: Math.floor(getRandom(i) * 0.15),
-			stayTime: 180 + Math.random() * 120,
-			bounceRate: 35 + Math.random() * 15,
-		}));
-	}, [currentDate, timeRange]);
+
+		if (trendData?.daily_trend && trendData.daily_trend.length > 0) {
+			// 일별 데이터를 timeRange에 맞게 가공
+			const dailyData = trendData.daily_trend;
+
+			if (timeRange === TimeRange.WEEK) {
+				// 최근 7일
+				const recentDays = dailyData.slice(-7);
+				const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+				return recentDays.map((item) => {
+					const date = new Date(item.date);
+					return {
+						name: dayNames[date.getDay()],
+						visits: item.visits,
+						conversions: Math.floor(item.visits * 0.05),
+						stayTime: item.avgSessionDuration,
+						bounceRate: item.bounceRate,
+					};
+				});
+			}
+
+			if (timeRange === TimeRange.MONTH) {
+				// 최근 30일
+				return dailyData.slice(-30).map((item) => {
+					const date = new Date(item.date);
+					return {
+						name: `${date.getDate()}일`,
+						visits: item.visits,
+						conversions: Math.floor(item.visits * 0.05),
+						stayTime: item.avgSessionDuration,
+						bounceRate: item.bounceRate,
+					};
+				});
+			}
+
+			if (timeRange === TimeRange.YEAR) {
+				// 월별 집계
+				const monthlyData: Record<string, { visits: number; count: number; stayTime: number; bounceRate: number }> = {};
+				dailyData.forEach((item) => {
+					const month = item.date.substring(5, 7);
+					if (!monthlyData[month]) {
+						monthlyData[month] = { visits: 0, count: 0, stayTime: 0, bounceRate: 0 };
+					}
+					monthlyData[month].visits += item.visits;
+					monthlyData[month].stayTime += item.avgSessionDuration;
+					monthlyData[month].bounceRate += item.bounceRate;
+					monthlyData[month].count++;
+				});
+
+				return Object.entries(monthlyData)
+					.sort(([a], [b]) => parseInt(a) - parseInt(b))
+					.map(([month, data]) => ({
+						name: `${parseInt(month)}월`,
+						visits: data.visits,
+						conversions: Math.floor(data.visits * 0.05),
+						stayTime: data.count > 0 ? data.stayTime / data.count : 0,
+						bounceRate: data.count > 0 ? data.bounceRate / data.count : 0,
+					}));
+			}
+		}
+
+		// 데이터가 없을 때 빈 배열 반환 (로딩 상태)
+		return [];
+	}, [trendData, timeRange]);
 
 	const getScaledValue = (base: number) => {
 		if (timeRange === TimeRange.YEAR) return base * 12;
@@ -187,7 +470,7 @@ const App: React.FC = () => {
 		return Math.floor(base * 0.04);
 	};
 
-	// API 데이터가 있으면 사용, 없으면 목업 데이터 사용
+	// API 데이터 사용 (더미 데이터 제거)
 	const displayMetrics = useMemo(() => {
 		if (analyticsSummary) {
 			return {
@@ -200,27 +483,107 @@ const App: React.FC = () => {
 				topPages: analyticsSummary.top_pages,
 				trafficSources: analyticsSummary.traffic_sources,
 				geography: analyticsSummary.geography,
+				// 새로 추가된 데이터
+				comparison: analyticsSummary.comparison,
+				browserOs: analyticsSummary.browser_os,
+				newVsReturning: analyticsSummary.new_vs_returning,
 			};
 		}
-		// 목업 데이터 (API 데이터가 없을 때)
+		// 데이터 로딩 중 - 빈 데이터 반환
 		return {
-			totalVisitors: getScaledValue(124532),
-			dailyAverage: Math.floor(getScaledValue(124532) / (timeRange === TimeRange.YEAR ? 365 : chartData.length)),
-			avgSessionTime: 262,
-			bounceRate: 42.3,
-			mobileRatio: 62,
-			desktopRatio: 38,
-			topPages: MOCK_PAGE_VIEWS.map(p => ({ path: p.name, title: p.name, views: p.views, users: Math.floor(p.views * 0.7), avg_time: parseFloat(p.time.replace(':', '.')) * 60 })),
-			trafficSources: MOCK_CHANNELS.map(c => ({ source: c.name, medium: 'organic', users: Math.floor(c.value * 100), sessions: Math.floor(c.value * 120) })),
-			geography: MOCK_COUNTRIES.map(c => ({ country: c.name, city: '', users: c.value })),
+			totalVisitors: 0,
+			dailyAverage: 0,
+			avgSessionTime: 0,
+			bounceRate: 0,
+			mobileRatio: 0,
+			desktopRatio: 0,
+			topPages: [],
+			trafficSources: [],
+			geography: [],
+			comparison: null,
+			browserOs: null,
+			newVsReturning: null,
 		};
-	}, [analyticsSummary, timeRange, chartData.length]);
+	}, [analyticsSummary]);
+
+	// topPages 데이터가 로드되면 첫 번째 페이지를 자동 선택
+	useEffect(() => {
+		if (displayMetrics.topPages.length > 0 && !selectedHeatmapPage) {
+			setSelectedHeatmapPage(displayMetrics.topPages[0].path);
+		}
+	}, [displayMetrics.topPages, selectedHeatmapPage]);
+
+	// 상황별 최적화 팁 생성 함수
+	const getOptimizationTips = () => {
+		const tips: { type: 'success' | 'warning' | 'info'; message: string }[] = [];
+		const bounceRate = displayMetrics.bounceRate || 0;
+
+		// 커스텀 목표 기반 팁 생성
+		customGoals.forEach(goal => {
+			const progress = getGoalProgress(goal);
+			if (progress >= 100) {
+				tips.push({ type: 'success', message: `${goal.name} 목표를 달성했습니다! 목표를 상향 조정해보세요.` });
+			} else if (progress >= 70) {
+				tips.push({ type: 'info', message: `${goal.name} 목표 달성까지 거의 다 왔습니다. 조금만 더 힘내세요!` });
+			} else if (progress < 30) {
+				if (goal.goal_type === 'visitors') {
+					tips.push({ type: 'warning', message: 'SEO 최적화와 소셜 미디어 홍보로 방문자 유입을 늘려보세요.' });
+				} else if (goal.goal_type === 'stay_time') {
+					tips.push({ type: 'warning', message: '체류시간이 목표에 미달합니다. 콘텐츠 품질을 점검하세요.' });
+				}
+			}
+		});
+
+		// 기본 팁 (목표가 없거나 팁이 부족한 경우)
+		if (tips.length < 3) {
+			if (bounceRate > 70) {
+				tips.push({ type: 'warning', message: '이탈률이 높습니다. 랜딩 페이지 개선이 필요합니다.' });
+			} else if (bounceRate < 40) {
+				tips.push({ type: 'success', message: '이탈률이 낮아 사용자 참여도가 좋습니다.' });
+			} else {
+				tips.push({ type: 'info', message: 'CTA 버튼 위치와 디자인을 A/B 테스트해보세요.' });
+			}
+		}
+
+		if (tips.length < 3 && customGoals.length === 0) {
+			tips.push({ type: 'info', message: '목표를 설정하여 사이트 성과를 체계적으로 관리해보세요.' });
+		}
+
+		return tips.slice(0, 3);
+	};
 
 	// 체류시간 포맷팅 (초 -> mm:ss)
 	const formatSessionTime = (seconds: number) => {
+		if (!seconds || isNaN(seconds) || seconds === 0) {
+			return "데이터 부족";
+		}
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.floor(seconds % 60);
 		return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+	};
+
+	// 일평균 방문자 포맷팅
+	const formatDailyAverage = (value: number) => {
+		if (!value || isNaN(value) || value === 0) {
+			return "데이터 부족";
+		}
+		return value.toLocaleString();
+	};
+
+	// 시간 범위에 따른 평균 방문자 라벨
+	const getAverageVisitorLabel = () => {
+		switch (timeRange) {
+			case TimeRange.DAY:
+				return "시간당 평균";
+			case TimeRange.WEEK:
+				return "일평균 방문자";
+			case TimeRange.MONTH:
+				return "일평균 방문자";
+			case TimeRange.YEAR:
+				return "월평균 방문자";
+			default:
+				return "평균 방문자";
+		}
 	};
 
 	const updateInsights = async () => {
@@ -259,8 +622,8 @@ const App: React.FC = () => {
 	const handleSelectPlan = async (planId: PlanID) => {
 		setIsInsightLoading(true);
 		setTimeout(() => {
-			const newLimit = planId === "pro" ? 5000000 : 100000000;
-			setSubscription(prev => ({ ...prev, plan_id: planId, request_limit: newLimit }));
+			// TODO: 실제 API 호출로 플랜 업그레이드 처리
+			// 업그레이드 성공 후 user.tier가 변경되면 subscription이 자동으로 업데이트됨
 			handleTabChange(TabID.BILLING_SUCCESS);
 			setIsInsightLoading(false);
 		}, 1500);
@@ -290,6 +653,7 @@ const App: React.FC = () => {
 				name: projectName.trim(),
 				source_url: normalized,
 				custom_subdomain: subdomain.trim() || undefined,
+				hosting_mode: hostingMode,
 			});
 			setGeneratedUrl(`https://${project.full_domain}`);
 			selectProject(project);
@@ -372,6 +736,7 @@ const App: React.FC = () => {
 		setUrlInput("");
 		setProjectName("");
 		setSubdomain("");
+		setHostingMode("STATIC");
 		setSelectedFile(null);
 		setUploadStatus("idle");
 		setUploadProgress(0);
@@ -384,12 +749,6 @@ const App: React.FC = () => {
 		setTimeout(() => setCopySuccess(false), 2000);
 	};
 
-	const handleLogin = (e: React.FormEvent) => {
-		e.preventDefault();
-		// 이메일/비밀번호 로그인은 현재 미지원 - Google OAuth만 지원
-		setConnectError("현재는 Google 계정으로만 로그인이 가능합니다.");
-	};
-
 	const handleGoogleLogin = () => {
 		login(); // Google OAuth 로그인 시작
 	};
@@ -398,6 +757,38 @@ const App: React.FC = () => {
 		logout();
 		setCurrentView(ViewID.CONNECT);
 		handleResetConnect();
+	};
+
+	const handleRecrawl = async () => {
+		if (!currentProject || isRecrawling) return;
+
+		setIsRecrawling(true);
+		try {
+			await projectApi.recrawlProject(currentProject.id);
+			showToast("다시 가져오기가 완료되었습니다!", "success");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "다시 가져오기에 실패했습니다.";
+			showToast(message, "error");
+		} finally {
+			setIsRecrawling(false);
+		}
+	};
+
+	const handleRedeploy = async () => {
+		if (!currentProject || !redeployFile || isRedeploying) return;
+
+		setIsRedeploying(true);
+		try {
+			await projectApi.redeployProject(currentProject.id, redeployFile);
+			showToast("재배포가 완료되었습니다!", "success");
+			setShowRedeployModal(false);
+			setRedeployFile(null);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "재배포에 실패했습니다.";
+			showToast(message, "error");
+		} finally {
+			setIsRedeploying(false);
+		}
 	};
 
 	// --- RENDERING VIEWS ---
@@ -417,7 +808,39 @@ const App: React.FC = () => {
 					<br />
 					어떤 방식으로 연결할까요?
 				</h2>
-				<p className="text-slate-500 font-bold mb-12 text-lg">가장 빠르고 정확한 데이터 수집을 시작해 보세요.</p>
+				<p className="text-slate-500 font-bold mb-6 text-lg">가장 빠르고 정확한 데이터 수집을 시작해 보세요.</p>
+
+				{/* 기존 프로젝트가 있으면 대시보드 바로가기 표시 */}
+				{isAuthenticated && projects.length > 0 && (
+					<button
+						onClick={() => {
+							if (currentProject) {
+								setCurrentView(ViewID.ANALYTICS);
+							} else {
+								selectProject(projects[0]);
+								setCurrentView(ViewID.ANALYTICS);
+							}
+						}}
+						className="inline-flex items-center gap-2 px-6 py-3 mb-8 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-sm font-bold transition-all shadow-lg shadow-indigo-100">
+						<LayoutGrid size={16} />
+						기존 프로젝트 대시보드 보기
+						<ArrowRight size={14} />
+					</button>
+				)}
+				{/* 로그인은 되어있지만 프로젝트가 없는 경우 - 로딩 중이거나 프로젝트 없음 */}
+				{isAuthenticated && projects.length === 0 && !isProjectsLoading && (
+					<p className="text-sm text-slate-400 mb-6">아래에서 새 프로젝트를 추가하세요.</p>
+				)}
+				{/* 로그인 안내 - 로그인하지 않은 경우 */}
+				{!isAuthenticated && !isAuthLoading && (
+					<button
+						onClick={() => setCurrentView(ViewID.LOGIN)}
+						className="inline-flex items-center gap-2 px-6 py-3 mb-8 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-2xl text-sm font-bold transition-all border border-indigo-200">
+						<Lock size={16} />
+						로그인하고 대시보드 이용하기
+						<ArrowRight size={14} />
+					</button>
+				)}
 
 				{/* Tab Selection - Minimal Style (Removed drop shadow effects) */}
 				<div className="flex bg-slate-100 p-1 rounded-[2.2rem] border border-slate-200 mb-4 max-w-md mx-auto relative z-10">
@@ -507,6 +930,7 @@ const App: React.FC = () => {
 										<input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="프로젝트 이름" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
 										<input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="서브도메인 (선택)" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
 									</div>
+									{/* 호스팅 모드 UI 숨김 - 동적 크롤링으로 대체됨 (백엔드 코드는 유지) */}
 									<button onClick={handleGenerateFromUrl} disabled={isGenerating || !isAuthenticated} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl tracking-tight hover:bg-slate-800 transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 shadow-2xl shadow-slate-900/10">
 										{isGenerating ? (
 											<>
@@ -735,57 +1159,41 @@ const App: React.FC = () => {
 
 	const renderLoginView = () => (
 		<div className="flex-1 flex items-center justify-center p-6 animate-reveal">
-			<div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl overflow-hidden min-h-[650px]">
+			<div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl overflow-hidden min-h-[550px]">
 				{/* Login Form Column */}
-				<div className="p-12 md:p-16 flex flex-col justify-center">
-					<div className="mb-10 flex gap-4 border-b border-slate-100">
-						<button onClick={() => setIsLoginTab(true)} className={`pb-4 px-2 text-lg font-black transition-all relative ${isLoginTab ? "text-slate-900" : "text-slate-300 hover:text-slate-400"}`}>
-							로그인
-							{isLoginTab && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-600 rounded-full animate-reveal"></div>}
-						</button>
-						<button onClick={() => setIsLoginTab(false)} className={`pb-4 px-2 text-lg font-black transition-all relative ${!isLoginTab ? "text-slate-900" : "text-slate-300 hover:text-slate-400"}`}>
-							회원가입
-							{!isLoginTab && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-600 rounded-full animate-reveal"></div>}
-						</button>
-					</div>
+				<div className="p-12 md:p-16 flex flex-col justify-center items-center">
+					<div className="w-full max-w-sm space-y-8">
+						{/* Logo & Title */}
+						<div className="text-center space-y-3">
+							<div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-xl shadow-indigo-600/20">
+								<Sigma size={32} className="text-white" />
+							</div>
+							<h2 className="text-2xl font-black text-slate-900 tracking-tight">ARTIFY에 오신 것을 환영합니다</h2>
+							<p className="text-sm font-medium text-slate-500">Google 계정으로 간편하게 시작하세요</p>
+						</div>
 
-					<form className="space-y-6" onSubmit={handleLogin}>
-						<div className="space-y-1.5">
-							<label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">이메일 주소</label>
-							<input type="email" required placeholder="mason@artify.com" className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
-						</div>
-						<div className="space-y-1.5">
-							<div className="flex justify-between items-center">
-								<label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1">비밀번호</label>
-								{isLoginTab && (
-									<button type="button" className="text-[10px] font-black text-indigo-500 hover:text-indigo-600">
-										비밀번호 찾기
-									</button>
-								)}
-							</div>
-							<input type="password" required placeholder="••••••••" className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
-						</div>
-						{!isLoginTab && (
-							<div className="flex items-start gap-3 p-1">
-								<input type="checkbox" required className="mt-1 accent-indigo-600" id="terms" />
-								<label htmlFor="terms" className="text-[12px] font-bold text-slate-500 leading-snug cursor-pointer">
-									ARTIFY의 <span className="text-slate-900 underline underline-offset-4 decoration-slate-200">이용약관</span> 및 <span className="text-slate-900 underline underline-offset-4 decoration-slate-200">개인정보처리방침</span>에 동의합니다.
-								</label>
-							</div>
-						)}
-						<button type="submit" className="w-full bg-slate-900 text-white py-4.5 rounded-2xl font-black text-md tracking-tight hover:bg-slate-800 transition-all shadow-xl active:scale-95">
-							{isLoginTab ? "로그인" : "계정 만들기"}
-						</button>
-						<div className="relative py-4 flex items-center gap-4">
-							<div className="flex-1 h-px bg-slate-100"></div>
-							<span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">or continue with</span>
-							<div className="flex-1 h-px bg-slate-100"></div>
-						</div>
-						<button type="button" onClick={handleGoogleLogin} className="w-full border border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
-							<img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
+						{/* Google Login Button */}
+						<button
+							type="button"
+							onClick={handleGoogleLogin}
+							className="w-full border-2 border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 hover:border-slate-300 transition-all flex items-center justify-center gap-3 active:scale-95 shadow-sm"
+						>
+							<svg className="w-5 h-5" viewBox="0 0 24 24">
+								<path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+								<path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+								<path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+								<path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+							</svg>
 							Google 계정으로 계속하기
 						</button>
-					</form>
+
+						{/* Terms */}
+						<p className="text-[11px] text-center text-slate-400 leading-relaxed">
+							계속 진행하면 ARTIFY의{" "}
+							<span className="text-slate-600 underline underline-offset-2 cursor-pointer hover:text-indigo-600">이용약관</span> 및{" "}
+							<span className="text-slate-600 underline underline-offset-2 cursor-pointer hover:text-indigo-600">개인정보처리방침</span>에 동의하는 것으로 간주됩니다.
+						</p>
+					</div>
 				</div>
 
 				{/* Brand Side Panel */}
@@ -846,15 +1254,44 @@ const App: React.FC = () => {
 							<h2 className="text-4xl font-black text-slate-900 tracking-tighter">{NAVIGATION_ITEMS.find(i => i.id === activeTab)?.label || "ARTIFY Intelligence Suite"}</h2>
 							{/* 프로젝트 선택기 */}
 							{projects.length > 0 && (
-								<div className="relative">
+								<div className="relative flex items-center gap-2">
 									<button
 										onClick={() => setShowProjectSelector(!showProjectSelector)}
 										className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-bold text-slate-600 transition-colors"
 									>
 										<Globe size={16} />
 										{currentProject?.name || '프로젝트 선택'}
+										{/* 현재 프로젝트 상태 배지 */}
+										{currentProject && currentProject.status && currentProject.status !== 'READY' && (
+											<span className={`ml-1 px-2 py-0.5 text-[10px] font-bold rounded-full ${
+												currentProject.status === 'PROCESSING' || currentProject.status === 'PENDING'
+													? 'bg-amber-100 text-amber-700'
+													: currentProject.status === 'ERROR'
+													? 'bg-red-100 text-red-700'
+													: 'bg-slate-100 text-slate-500'
+											}`}>
+												{currentProject.status === 'PENDING' ? '대기중' :
+												 currentProject.status === 'PROCESSING' ? '준비중' :
+												 currentProject.status === 'ERROR' ? '오류' : currentProject.status}
+											</span>
+										)}
 										<ChevronDown size={16} className={`transition-transform ${showProjectSelector ? 'rotate-180' : ''}`} />
 									</button>
+									{/* URL 복사 버튼 */}
+									{currentProject && currentProject.status === 'READY' && (
+										<button
+											onClick={() => {
+												const url = `https://${currentProject.subdomain}.artify.page`;
+												navigator.clipboard.writeText(url);
+												showToast(`URL이 복사되었습니다: ${url}`, 'success');
+											}}
+											className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 rounded-xl text-xs font-bold text-indigo-600 transition-colors"
+											title={`https://${currentProject.subdomain}.artify.page`}
+										>
+											<Copy size={14} />
+											URL 복사
+										</button>
+									)}
 									{showProjectSelector && (
 										<div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-2xl border border-slate-200 shadow-2xl z-50 overflow-hidden">
 											<div className="p-2 border-b border-slate-100">
@@ -862,24 +1299,64 @@ const App: React.FC = () => {
 											</div>
 											<div className="max-h-60 overflow-auto">
 												{projects.map(project => (
-													<button
+													<div
 														key={project.id}
-														onClick={() => {
-															selectProject(project);
-															setShowProjectSelector(false);
-														}}
-														className={`w-full px-4 py-3 text-left hover:bg-slate-50 transition-colors flex items-center justify-between ${
+														className={`w-full px-4 py-3 hover:bg-slate-50 transition-colors flex items-center justify-between ${
 															currentProject?.id === project.id ? 'bg-indigo-50' : ''
 														}`}
 													>
-														<div>
-															<p className="text-sm font-bold text-slate-700">{project.name}</p>
-															<p className="text-[10px] text-slate-400">{project.full_domain}</p>
+														<button
+															onClick={() => {
+																selectProject(project);
+																setShowProjectSelector(false);
+															}}
+															className="flex items-center gap-2 flex-1 text-left"
+														>
+															{/* 상태 인디케이터 */}
+															{project.status === 'READY' ? (
+																<span className="w-2 h-2 rounded-full bg-green-500" title="준비 완료" />
+															) : project.status === 'PROCESSING' || project.status === 'PENDING' ? (
+																<span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title={project.status_message || '준비 중'} />
+															) : project.status === 'ERROR' ? (
+																<span className="w-2 h-2 rounded-full bg-red-500" title={project.status_message || '오류'} />
+															) : (
+																<span className="w-2 h-2 rounded-full bg-slate-300" />
+															)}
+															<div>
+																<p className="text-sm font-bold text-slate-700">{project.name}</p>
+																<p className="text-[10px] text-slate-400">
+																	{project.status === 'READY' || !project.status
+																		? project.full_domain
+																		: project.status_message || '준비 중...'}
+																</p>
+															</div>
+														</button>
+														<div className="flex items-center gap-1">
+															{currentProject?.id === project.id && (
+																<Check size={16} className="text-indigo-600" />
+															)}
+															<button
+																onClick={async (e) => {
+																	e.stopPropagation();
+																	if (confirm(`"${project.name}" 프로젝트를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) {
+																		try {
+																			await deleteProject(project.id);
+																			showToast('프로젝트가 삭제되었습니다.', 'success');
+																			if (currentProject?.id === project.id) {
+																				selectProject(null);
+																			}
+																		} catch (error) {
+																			showToast('프로젝트 삭제에 실패했습니다.', 'error');
+																		}
+																	}
+																}}
+																className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+																title="프로젝트 삭제"
+															>
+																<Trash2 size={14} />
+															</button>
 														</div>
-														{currentProject?.id === project.id && (
-															<Check size={16} className="text-indigo-600" />
-														)}
-													</button>
+													</div>
 												))}
 											</div>
 											<div className="p-2 border-t border-slate-100">
@@ -932,9 +1409,22 @@ const App: React.FC = () => {
 								<span>Today</span>
 							</button>
 						</div>
-						<button onClick={() => setIsReportModalOpen(true)} className="bg-slate-900 text-white px-7 py-3 rounded-[1.5rem] flex items-center gap-2.5 text-sm font-black shadow-2xl hover:bg-slate-800 transition-all active:scale-95">
-							<Download size={16} /> 리포트 내보내기
-						</button>
+						{currentProject?.source_type === "URL" ? (
+							<button
+								onClick={handleRecrawl}
+								disabled={isRecrawling}
+								className="bg-slate-900 text-white px-7 py-3 rounded-[1.5rem] flex items-center gap-2.5 text-sm font-black shadow-2xl hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{isRecrawling ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />} 다시 가져오기
+							</button>
+						) : currentProject?.source_type === "ZIP" ? (
+							<button
+								onClick={() => setShowRedeployModal(true)}
+								className="bg-slate-900 text-white px-7 py-3 rounded-[1.5rem] flex items-center gap-2.5 text-sm font-black shadow-2xl hover:bg-slate-800 transition-all active:scale-95"
+							>
+								<Upload size={16} /> 재배포
+							</button>
+						) : null}
 					</div>
 				</header>
 			)}
@@ -1033,17 +1523,17 @@ const App: React.FC = () => {
 							</div>
 						)}
 						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-							<MetricCard title="총 방문자 수" value={displayMetrics.totalVisitors.toLocaleString()} change={12.5} description="선택한 기간 동안 사이트를 방문한 총 순 방문자 수입니다." icon={<Users size={18} />} />
-							<MetricCard title="일평균 방문자" value={displayMetrics.dailyAverage.toLocaleString()} change={2.1} description="해당 기간 내 하루 평균 유입되는 활성 방문자 수의 평균값입니다." icon={<Activity size={18} />} />
-							<MetricCard title="평균 체류시간" value={formatSessionTime(displayMetrics.avgSessionTime)} change={5.8} description="사용자가 사이트에 머무르는 평균 시간으로 몰입도를 나타냅니다." icon={<Clock size={18} />} />
-							<MetricCard title="이탈률" value={displayMetrics.bounceRate.toFixed(1)} suffix="%" change={-1.2} description="첫 페이지만 보고 이탈한 방문자의 비율입니다." icon={<TrendingDown size={18} />} />
+							<MetricCard title="총 방문자 수" value={displayMetrics.totalVisitors.toLocaleString()} change={displayMetrics.comparison?.changes.total_visitors ?? 0} description="선택한 기간 동안 사이트를 방문한 총 순 방문자 수입니다." icon={<Users size={18} />} />
+							<MetricCard title={getAverageVisitorLabel()} value={formatDailyAverage(displayMetrics.dailyAverage)} change={displayMetrics.comparison?.changes.sessions ?? 0} description="선택한 기간 내 평균 방문자 수입니다." icon={<Activity size={18} />} />
+							<MetricCard title="평균 체류시간" value={formatSessionTime(displayMetrics.avgSessionTime)} change={displayMetrics.comparison?.changes.avg_session_time ?? 0} description="사용자가 사이트에 머무르는 평균 시간으로 몰입도를 나타냅니다." icon={<Clock size={18} />} />
+							<MetricCard title="이탈률" value={displayMetrics.bounceRate.toFixed(1)} suffix="%" change={displayMetrics.comparison?.changes.bounce_rate ?? 0} description="첫 페이지만 보고 이탈한 방문자의 비율입니다." icon={<TrendingDown size={18} />} />
 						</div>
 						<div className="grid grid-cols-1 lg:grid-cols-3 gap-7">
 							<div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group">
 								<div className="flex justify-between items-center mb-8">
 									<div>
-										<h3 className="text-xl font-black text-slate-900 tracking-tight">트래픽 유입 트렌드</h3>
-										<p className="text-[11px] font-bold text-slate-400 mt-1 uppercase tracking-wider">{timeRange.toUpperCase()} Flow Analysis</p>
+										<h3 className="text-xl font-black text-slate-900 tracking-tight">방문자 추이</h3>
+										<p className="text-[11px] font-bold text-slate-400 mt-1 uppercase tracking-wider">{timeRange.toUpperCase()} Visitor Trend</p>
 									</div>
 									<div className="flex items-center gap-4 text-[10px] font-bold text-slate-400">
 										<div className="flex items-center gap-1.5">
@@ -1075,14 +1565,14 @@ const App: React.FC = () => {
 									<div className="h-56 w-full relative">
 										<div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
 											<span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Retention</span>
-											<span className="text-3xl font-black text-slate-900 tracking-tighter">65.4%</span>
+											<span className="text-3xl font-black text-slate-900 tracking-tighter">{(displayMetrics.newVsReturning?.returning_ratio ?? 0).toFixed(1)}%</span>
 										</div>
 										<ResponsiveContainer width="100%" height="100%">
 											<PieChart>
 												<Pie
 													data={[
-														{ name: "신규 방문", value: 34.6, color: "#6366f1" },
-														{ name: "재방문", value: 65.4, color: "#f1f5f9" },
+														{ name: "신규 방문", value: displayMetrics.newVsReturning?.new_ratio ?? 0, color: "#6366f1" },
+														{ name: "재방문", value: displayMetrics.newVsReturning?.returning_ratio ?? 0, color: "#f1f5f9" },
 													]}
 													cx="50%"
 													cy="50%"
@@ -1094,8 +1584,8 @@ const App: React.FC = () => {
 													animationBegin={200}
 													animationDuration={1500}>
 													{[
-														{ name: "신규", value: 34.6, color: "#6366f1" },
-														{ name: "재방문", value: 65.4, color: "#f1f5f9" },
+														{ name: "신규", value: displayMetrics.newVsReturning?.new_ratio ?? 0, color: "#6366f1" },
+														{ name: "재방문", value: displayMetrics.newVsReturning?.returning_ratio ?? 0, color: "#f1f5f9" },
 													].map((e, i) => (
 														<Cell key={i} fill={e.color} className="hover:opacity-80 transition-opacity" />
 													))}
@@ -1109,14 +1599,14 @@ const App: React.FC = () => {
 												<div className="w-2.5 h-2.5 rounded-full bg-indigo-500"></div>
 												<span className="text-[12px] font-bold text-slate-600">신규 방문자</span>
 											</div>
-											<span className="text-sm font-black text-slate-900">34.6%</span>
+											<span className="text-sm font-black text-slate-900">{(displayMetrics.newVsReturning?.new_ratio ?? 0).toFixed(1)}%</span>
 										</div>
 										<div className="flex justify-between items-center p-3 rounded-2xl bg-slate-50 border border-slate-100">
 											<div className="flex items-center gap-3">
 												<div className="w-2.5 h-2.5 rounded-full bg-slate-300"></div>
 												<span className="text-[12px] font-bold text-slate-600">재방문자</span>
 											</div>
-											<span className="text-sm font-black text-slate-900">65.4%</span>
+											<span className="text-sm font-black text-slate-900">{(displayMetrics.newVsReturning?.returning_ratio ?? 0).toFixed(1)}%</span>
 										</div>
 									</div>
 								</div>
@@ -1130,40 +1620,70 @@ const App: React.FC = () => {
 						<div className="bg-white p-7 rounded-[2rem] border border-slate-200 shadow-sm">
 							<h3 className="text-lg font-black mb-6">페이지별 트래픽</h3>
 							<div className="space-y-1">
-								{MOCK_PAGE_VIEWS.map((page, idx) => (
-									<div key={idx} onClick={() => setSelectedHeatmapPage(page.name)} className={`flex items-center justify-between p-3.5 rounded-xl cursor-pointer transition-all ${selectedHeatmapPage === page.name ? "bg-indigo-600 text-white shadow-lg shadow-indigo-100 scale-[1.01]" : "hover:bg-slate-50"}`}>
-										<div className="flex items-center gap-3">
-											<span className={`text-[10px] font-black ${selectedHeatmapPage === page.name ? "text-white/40" : "text-slate-300"}`}>0{idx + 1}</span>
-											<span className="text-sm font-bold">{page.name}</span>
+								{displayMetrics.topPages.length > 0 ? (
+									displayMetrics.topPages.map((page, idx) => (
+										<div key={idx} onClick={() => setSelectedHeatmapPage(page.path)} className={`flex items-center justify-between p-3.5 rounded-xl cursor-pointer transition-all ${selectedHeatmapPage === page.path ? "bg-indigo-600 text-white shadow-lg shadow-indigo-100 scale-[1.01]" : "hover:bg-slate-50"}`}>
+											<div className="flex items-center gap-3">
+												<span className={`text-[10px] font-black ${selectedHeatmapPage === page.path ? "text-white/40" : "text-slate-300"}`}>0{idx + 1}</span>
+												<span className="text-sm font-bold">{page.title || page.path}</span>
+											</div>
+											<div className="text-right">
+												<p className="text-sm font-black">{page.views.toLocaleString()}명</p>
+												<p className={`text-[10px] font-bold ${selectedHeatmapPage === page.path ? "text-white/60" : "text-slate-400"}`}>평균 {formatSessionTime(page.avg_time || 0)}</p>
+											</div>
 										</div>
-										<div className="text-right">
-											<p className="text-sm font-black">{getScaledValue(page.views).toLocaleString()}명</p>
-											<p className={`text-[10px] font-bold ${selectedHeatmapPage === page.name ? "text-white/60" : "text-slate-400"}`}>평균 {page.time}</p>
-										</div>
+									))
+								) : (
+									<div className="text-center py-8 text-slate-400">
+										<p className="text-sm">페이지 데이터 없음</p>
 									</div>
-								))}
+								)}
 							</div>
 						</div>
 						<div className="bg-white p-7 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-visible">
 							<h3 className="text-lg font-black mb-6 flex items-center gap-2">
-								<MousePointer2 size={18} className="text-rose-500" /> 히트맵 분석: <span className="text-indigo-600">{selectedHeatmapPage}</span>
+								<MousePointer2 size={18} className="text-rose-500" /> 히트맵 분석:
+								{selectedHeatmapPage ? (
+									<>
+										<span className="text-indigo-600">{selectedHeatmapPage}</span>
+										<span className="text-sm font-normal text-slate-500 ml-2">({heatmapData?.total_clicks?.toLocaleString() ?? 0} 클릭)</span>
+									</>
+								) : (
+									<span className="text-slate-400 font-normal text-sm">페이지를 선택해주세요</span>
+								)}
 							</h3>
 							<div className="aspect-video bg-slate-50 rounded-2xl border border-slate-100 relative overflow-hidden shadow-inner">
-								{(() => {
-									const pageData = MOCK_HEATMAP_DATA[selectedHeatmapPage] || [];
-									const maxClicks = Math.max(...pageData.map(s => s.clicks), 1);
-									return pageData.map(spot => {
-										const intensity = spot.clicks / maxClicks;
-										const size = 24 + intensity * 56;
-										return (
-											<div key={spot.id} className={`absolute rounded-full ${spot.color} cursor-help group/spot flex items-center justify-center z-10 opacity-60`} style={{ left: `${spot.x}%`, top: `${spot.y}%`, width: `${size}px`, height: `${size}px`, transform: "translate(-50%, -50%)" }}>
-												<div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover/spot:opacity-100 transition-all duration-300 pointer-events-none bg-slate-900 text-white text-[10px] font-black px-3 py-2.5 rounded-xl whitespace-nowrap z-[100] shadow-2xl scale-95 group-hover/spot:scale-100">
-													{spot.label}: {spot.clicks.toLocaleString()} clicks
+								{!selectedHeatmapPage ? (
+									<div className="flex flex-col items-center justify-center h-full text-slate-400">
+										<MousePointer2 size={32} className="mb-3 opacity-30" />
+										<p className="text-sm font-medium">좌측 페이지별 트래픽에서</p>
+										<p className="text-sm font-medium">분석할 페이지를 선택해주세요</p>
+									</div>
+								) : heatmapData && heatmapData.heatmap_spots && heatmapData.heatmap_spots.length > 0 ? (
+									(() => {
+										const spots = heatmapData.heatmap_spots;
+										const maxClicks = Math.max(...spots.map(s => s.clicks), 1);
+										const colorOptions = ['bg-rose-500', 'bg-indigo-500', 'bg-amber-500', 'bg-emerald-500', 'bg-purple-500'];
+										return spots.map((spot, idx) => {
+											const intensity = spot.clicks / maxClicks;
+											const size = 24 + intensity * 56;
+											const color = colorOptions[idx % colorOptions.length];
+											return (
+												<div key={spot.element_id} className={`absolute rounded-full ${color} cursor-help group/spot flex items-center justify-center z-10 opacity-60`} style={{ left: `${spot.x_percent}%`, top: `${spot.y_percent}%`, width: `${size}px`, height: `${size}px`, transform: "translate(-50%, -50%)" }}>
+													<div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover/spot:opacity-100 transition-all duration-300 pointer-events-none bg-slate-900 text-white text-[10px] font-black px-3 py-2.5 rounded-xl whitespace-nowrap z-[100] shadow-2xl scale-95 group-hover/spot:scale-100">
+														{spot.element_id}: {spot.clicks.toLocaleString()} clicks
+													</div>
 												</div>
-											</div>
-										);
-									});
-								})()}
+											);
+										});
+									})()
+								) : (
+									<div className="flex flex-col items-center justify-center h-full text-slate-400">
+										<MousePointerClick size={32} className="mb-3 opacity-30" />
+										<p className="text-sm font-medium">클릭 데이터 없음</p>
+										<p className="text-xs mt-1">사용자 클릭이 수집되면 여기에 표시됩니다</p>
+									</div>
+								)}
 							</div>
 						</div>
 					</div>
@@ -1174,50 +1694,70 @@ const App: React.FC = () => {
 						<div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
 							<h3 className="text-lg font-black mb-8">유입 채널</h3>
 							<div className="space-y-6">
-								{MOCK_CHANNELS.map((c, i) => (
-									<div key={i} className="group">
-										<div className="flex justify-between items-center mb-2 text-xs font-black">
-											<span className="text-slate-600 flex items-center gap-2">
-												<div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color }}></div>
-												{c.name}
-											</span>
-											<span className="text-slate-900">{c.value}%</span>
-										</div>
-										<div className="w-full bg-slate-50 h-2 rounded-full overflow-hidden border border-slate-100">
-											<div className="h-full transition-all duration-1000 group-hover:brightness-90" style={{ width: `${c.value}%`, backgroundColor: c.color }}></div>
-										</div>
+								{displayMetrics.trafficSources && displayMetrics.trafficSources.length > 0 ? (
+									(() => {
+										const totalUsers = displayMetrics.trafficSources.reduce((sum, s) => sum + (s.users || 0), 0) || 1;
+										const colors = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6'];
+										return displayMetrics.trafficSources.slice(0, 5).map((source, i) => {
+											const percentage = ((source.users || 0) / totalUsers * 100).toFixed(1);
+											return (
+												<div key={i} className="group">
+													<div className="flex justify-between items-center mb-2 text-xs font-black">
+														<span className="text-slate-600 flex items-center gap-2">
+															<div className="w-2 h-2 rounded-full" style={{ backgroundColor: colors[i % colors.length] }}></div>
+															{source.source || '직접 유입'}
+														</span>
+														<span className="text-slate-900">{percentage}%</span>
+													</div>
+													<div className="w-full bg-slate-50 h-2 rounded-full overflow-hidden border border-slate-100">
+														<div className="h-full transition-all duration-1000 group-hover:brightness-90" style={{ width: `${percentage}%`, backgroundColor: colors[i % colors.length] }}></div>
+													</div>
+												</div>
+											);
+										});
+									})()
+								) : (
+									<div className="text-center py-8 text-slate-400">
+										<p className="text-sm">유입 경로 데이터 없음</p>
 									</div>
-								))}
+								)}
 							</div>
 						</div>
-						<div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-							<h3 className="text-lg font-black mb-8">검색 키워드 TOP 5</h3>
-							<div className="space-y-3">
-								{MOCK_KEYWORDS.map((k, i) => (
-									<div key={i} className="flex justify-between items-center p-4 bg-slate-50 hover:bg-indigo-50 rounded-2xl transition-all cursor-pointer group">
-										<span className="text-sm font-bold text-slate-700">{k.text}</span>
-										<span className="text-xs font-black text-indigo-500">{k.value}</span>
-									</div>
-								))}
-							</div>
-						</div>
-						<div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
+						<div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
 							<h3 className="text-lg font-black mb-8">국가별 유입</h3>
 							<div className="space-y-5">
-								{MOCK_COUNTRIES.map((c, i) => (
-									<div key={i} className="flex items-center gap-4 group">
-										<div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-lg">{c.code === "KR" ? "🇰🇷" : "🌎"}</div>
-										<div className="flex-1">
-											<div className="flex justify-between items-center mb-1 text-[11px] font-black">
-												<span className="text-slate-700">{c.name}</span>
-												<span className="text-slate-400">{c.percentage}%</span>
-											</div>
-											<div className="w-full bg-slate-50 h-1.5 rounded-full overflow-hidden">
-												<div className="h-full bg-indigo-500/30" style={{ width: `${c.percentage}%` }}></div>
-											</div>
-										</div>
+								{displayMetrics.geography && displayMetrics.geography.length > 0 ? (
+									(() => {
+										const maxUsers = displayMetrics.geography[0]?.users || 1;
+										const countryEmojis: Record<string, string> = {
+											'South Korea': '🇰🇷', 'Korea': '🇰🇷', 'KR': '🇰🇷',
+											'United States': '🇺🇸', 'US': '🇺🇸',
+											'Japan': '🇯🇵', 'JP': '🇯🇵',
+											'China': '🇨🇳', 'CN': '🇨🇳',
+										};
+										return displayMetrics.geography.slice(0, 5).map((c, i) => {
+											const emoji = countryEmojis[c.country] || '🌎';
+											return (
+												<div key={i} className="flex items-center gap-4 group">
+													<div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-lg">{emoji}</div>
+													<div className="flex-1">
+														<div className="flex justify-between items-center mb-1 text-[11px] font-black">
+															<span className="text-slate-700">{c.country}</span>
+															<span className="text-slate-400">{(c.users || 0).toLocaleString()}</span>
+														</div>
+														<div className="w-full bg-slate-50 h-1.5 rounded-full overflow-hidden">
+															<div className="h-full bg-indigo-500/30" style={{ width: `${Math.min(((c.users || 0) / maxUsers) * 100, 100)}%` }}></div>
+														</div>
+													</div>
+												</div>
+											);
+										});
+									})()
+								) : (
+									<div className="text-center py-8 text-slate-400">
+										<p className="text-sm">국가별 데이터 없음</p>
 									</div>
-								))}
+								)}
 							</div>
 						</div>
 					</div>
@@ -1235,7 +1775,7 @@ const App: React.FC = () => {
 									<div className="w-24 h-24 bg-indigo-50 rounded-[2rem] flex items-center justify-center text-indigo-500 mb-4 transition-all group-hover:scale-110 group-hover:shadow-xl group-hover:shadow-indigo-100">
 										<Smartphone size={48} />
 									</div>
-									<p className="text-3xl font-black text-slate-900 tracking-tighter">{displayMetrics.mobileRatio.toFixed(0)}%</p>
+									<p className="text-3xl font-black text-slate-900 tracking-tighter">{(displayMetrics.mobileRatio || 0).toFixed(0)}%</p>
 									<p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Mobile</p>
 								</div>
 								<div className="w-px h-24 bg-slate-100"></div>
@@ -1243,7 +1783,7 @@ const App: React.FC = () => {
 									<div className="w-24 h-24 bg-slate-50 rounded-[2rem] flex items-center justify-center text-slate-400 mb-4 transition-all group-hover:scale-110 group-hover:bg-indigo-50 group-hover:text-indigo-500">
 										<Monitor size={48} />
 									</div>
-									<p className="text-3xl font-black text-slate-900 tracking-tighter">{displayMetrics.desktopRatio.toFixed(0)}%</p>
+									<p className="text-3xl font-black text-slate-900 tracking-tighter">{(displayMetrics.desktopRatio || 0).toFixed(0)}%</p>
 									<p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Desktop</p>
 								</div>
 							</div>
@@ -1261,22 +1801,23 @@ const App: React.FC = () => {
 									<Globe size={18} className="text-indigo-500" /> 브라우저 점유율
 								</h3>
 								<div className="space-y-6">
-									{[
-										{ n: "Chrome", v: 74 },
-										{ n: "Safari", v: 18 },
-										{ n: "Edge", v: 5 },
-										{ n: "기타", v: 3 },
-									].map((b, i) => (
-										<div key={i} className="group">
-											<div className="flex justify-between text-xs font-black mb-1.5">
-												<span className="text-slate-600">{b.n}</span>
-												<span className="text-indigo-600">{b.v}%</span>
+									{displayMetrics.browserOs?.browsers && displayMetrics.browserOs.browsers.length > 0 ? (
+										displayMetrics.browserOs.browsers.slice(0, 5).map((b, i) => (
+											<div key={i} className="group">
+												<div className="flex justify-between text-xs font-black mb-1.5">
+													<span className="text-slate-600">{b.name}</span>
+													<span className="text-indigo-600">{b.percentage}%</span>
+												</div>
+												<div className="w-full bg-slate-50 h-2 rounded-full overflow-hidden border border-slate-100">
+													<div className="h-full bg-indigo-500 rounded-full transition-all duration-1000" style={{ width: `${b.percentage}%` }}></div>
+												</div>
 											</div>
-											<div className="w-full bg-slate-50 h-2 rounded-full overflow-hidden border border-slate-100">
-												<div className="h-full bg-indigo-500 rounded-full transition-all duration-1000" style={{ width: `${b.v}%` }}></div>
-											</div>
+										))
+									) : (
+										<div className="text-center py-8 text-slate-400">
+											<p className="text-sm">브라우저 데이터 없음</p>
 										</div>
-									))}
+									)}
 								</div>
 							</div>
 							<div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
@@ -1284,17 +1825,18 @@ const App: React.FC = () => {
 									<Layers size={18} className="text-indigo-500" /> 운영체제 (OS)
 								</h3>
 								<div className="space-y-5">
-									{[
-										{ n: "iOS", v: 45 },
-										{ n: "Android", v: 28 },
-										{ n: "Windows", v: 22 },
-										{ n: "macOS", v: 5 },
-									].map((os, i) => (
-										<div key={i} className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100 rounded-2xl transition-all cursor-default">
-											<span className="text-sm font-bold text-slate-700">{os.n}</span>
-											<span className="text-sm font-black text-slate-900">{os.v}%</span>
+									{displayMetrics.browserOs?.operating_systems && displayMetrics.browserOs.operating_systems.length > 0 ? (
+										displayMetrics.browserOs.operating_systems.slice(0, 5).map((os, i) => (
+											<div key={i} className="flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100 rounded-2xl transition-all cursor-default">
+												<span className="text-sm font-bold text-slate-700">{os.name}</span>
+												<span className="text-sm font-black text-slate-900">{os.percentage}%</span>
+											</div>
+										))
+									) : (
+										<div className="text-center py-8 text-slate-400">
+											<p className="text-sm">OS 데이터 없음</p>
 										</div>
-									))}
+									)}
 								</div>
 							</div>
 						</div>
@@ -1302,122 +1844,374 @@ const App: React.FC = () => {
 				);
 			case TabID.CONVERSION:
 				return (
-					<div className="grid grid-cols-1 lg:grid-cols-12 gap-7 animate-reveal">
-						<div className="lg:col-span-6 bg-white p-10 md:p-14 rounded-[3.5rem] border border-slate-200 shadow-sm relative overflow-visible flex flex-col">
-							<h3 className="text-2xl font-black mb-14 tracking-tighter">구매 퍼널 플로우</h3>
-							<div className="flex-1 flex flex-col">
-								{(() => {
-									const dropOffs = MOCK_FUNNEL.map((f, i) => {
-										const prevStep = MOCK_FUNNEL[i - 1];
-										return prevStep ? (prevStep.count - f.count) / prevStep.count : 0;
-									});
-									const maxDropOffVal = Math.max(...dropOffs);
-									const maxDropOffIdx = dropOffs.indexOf(maxDropOffVal);
+					<div className="space-y-4 sm:space-y-7 animate-reveal">
+						{/* 목표 추가 모달 */}
+						{showGoalModal && (
+							<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowGoalModal(false)}>
+								<div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-3xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+									<div className="flex justify-between items-center mb-4 sm:mb-6">
+										<h3 className="text-lg sm:text-xl font-black text-slate-900">새 목표 추가</h3>
+										<button onClick={() => setShowGoalModal(false)} className="p-2 hover:bg-slate-100 rounded-xl">
+											<X size={20} className="text-slate-400" />
+										</button>
+									</div>
+									<div className="space-y-3 sm:space-y-4">
+										<div>
+											<label className="block text-sm font-bold text-slate-600 mb-2">목표 이름</label>
+											<input
+												type="text"
+												value={newGoal.name}
+												onChange={e => setNewGoal(prev => ({ ...prev, name: e.target.value }))}
+												placeholder="예: 일일 방문자 1000명 달성"
+												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
+											/>
+										</div>
+										<div>
+											<label className="block text-sm font-bold text-slate-600 mb-2">목표 유형</label>
+											<select
+												value={newGoal.goal_type}
+												onChange={e => handleGoalTypeChange(e.target.value as GoalType)}
+												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
+											>
+												<option value="visitors">일일 방문자 (명)</option>
+												<option value="stay_time">평균 체류시간 (초)</option>
+												<option value="page_views">페이지뷰 (회)</option>
+												<option value="bounce_rate">이탈률 (%, 목표 이하)</option>
+												<option value="sessions">세션 수 (회)</option>
+												<option value="new_visitors">신규 방문자 (명)</option>
+											</select>
+										</div>
+										<div>
+											<label className="block text-sm font-bold text-slate-600 mb-2">
+												목표 값 ({goalTypeDefaults[newGoal.goal_type as GoalType]?.unit || ''})
+											</label>
+											<input
+												type="number"
+												value={newGoal.target_value}
+												onChange={e => setNewGoal(prev => ({ ...prev, target_value: Number(e.target.value) }))}
+												placeholder={goalTypeDefaults[newGoal.goal_type as GoalType]?.placeholder || ''}
+												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
+											/>
+											{newGoal.goal_type === 'bounce_rate' && (
+												<p className="text-xs text-slate-400 mt-1">* 이탈률은 목표 값 이하로 낮추는 것이 목표입니다.</p>
+											)}
+										</div>
+										<div>
+											<label className="block text-sm font-bold text-slate-600 mb-2">목표 기간</label>
+											<select
+												value={newGoal.period}
+												onChange={e => setNewGoal(prev => ({ ...prev, period: e.target.value }))}
+												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
+											>
+												<option value="daily">일간 (1일)</option>
+												<option value="weekly">주간 (7일)</option>
+												<option value="monthly">월간 (30일)</option>
+												<option value="unlimited">기한없음</option>
+											</select>
+											{newGoal.period !== 'unlimited' && (
+												<p className="text-xs text-slate-400 mt-1">
+													* 목표 기간: 설정일로부터 {newGoal.period === 'daily' ? '1일' : newGoal.period === 'weekly' ? '7일' : '30일'}
+												</p>
+											)}
+										</div>
+									</div>
+									<div className="flex gap-3 mt-5 sm:mt-6">
+										<button
+											onClick={() => setShowGoalModal(false)}
+											className="flex-1 px-4 py-2.5 sm:py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors text-sm sm:text-base"
+										>
+											취소
+										</button>
+										<button
+											onClick={handleCreateGoal}
+											disabled={!newGoal.name}
+											className="flex-1 px-4 py-2.5 sm:py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 text-sm sm:text-base"
+										>
+											추가
+										</button>
+									</div>
+								</div>
+							</div>
+						)}
 
-									return MOCK_FUNNEL.map((f, i) => {
-										const prevStep = MOCK_FUNNEL[i - 1];
-										const dropOffValRaw = prevStep ? (prevStep.count - f.count) / prevStep.count : null;
-										const dropOff = dropOffValRaw !== null ? (dropOffValRaw * 100).toFixed(1) : null;
-										const isMaxDropOff = i === maxDropOffIdx && dropOffValRaw && dropOffValRaw > 0;
+						{/* 목표 달성 메인 카드 */}
+						<div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 p-5 sm:p-8 lg:p-10 rounded-2xl sm:rounded-[2.5rem] lg:rounded-[3rem] text-white shadow-2xl relative overflow-hidden">
+							<div className="absolute top-0 right-0 w-32 sm:w-48 lg:w-64 h-32 sm:h-48 lg:h-64 bg-indigo-500/10 rounded-full blur-3xl -mr-16 sm:-mr-24 lg:-mr-32 -mt-16 sm:-mt-24 lg:-mt-32"></div>
+							<div className="absolute bottom-0 left-0 w-24 sm:w-36 lg:w-48 h-24 sm:h-36 lg:h-48 bg-purple-500/10 rounded-full blur-3xl -ml-12 sm:-ml-18 lg:-ml-24 -mb-12 sm:-mb-18 lg:-mb-24"></div>
 
-										return (
-											<div key={i} className="relative flex flex-col group/f">
-												{dropOff && (
-													<div className="relative h-16 flex items-center">
-														<div className="absolute left-8 -translate-x-1/2 w-0.5 h-full bg-slate-100 group-hover/f:bg-indigo-100 transition-colors"></div>
-														<div className={`ml-16 px-4 py-2.5 rounded-2xl border text-[11px] font-black flex items-center gap-2.5 transition-all shadow-md z-20 ${isMaxDropOff ? "bg-rose-50 border-rose-100 text-rose-600 animate-pulse ring-4 ring-rose-500/5" : "bg-slate-50/70 border-slate-100 text-slate-400"}`}>
-															{isMaxDropOff ? <AlertCircle size={14} className="text-rose-500" /> : <TrendingDown size={14} />}
-															<span className="opacity-70">{isMaxDropOff ? "최고 이탈" : "이탈"}</span> {dropOff}%
+							<div className="relative z-10">
+								<div className="flex flex-col gap-4 sm:gap-6 lg:gap-8 mb-6 sm:mb-8">
+									<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+										<div className="flex gap-4 sm:gap-6 items-center">
+											<div className="w-14 h-14 sm:w-16 sm:h-16 lg:w-20 lg:h-20 bg-indigo-500 rounded-xl sm:rounded-2xl lg:rounded-[2rem] flex items-center justify-center shadow-lg shadow-indigo-500/30 flex-shrink-0">
+												<Target size={28} className="sm:hidden" />
+												<Target size={32} className="hidden sm:block lg:hidden" />
+												<Target size={40} className="hidden lg:block" />
+											</div>
+											<div>
+												<p className="text-[10px] sm:text-xs font-black uppercase text-indigo-400 tracking-widest mb-1 sm:mb-2">나의 목표</p>
+												<h4 className="text-xl sm:text-2xl lg:text-3xl font-black">
+													{customGoals.length > 0 ? `${customGoals.length}개의 목표` : '목표를 설정해보세요'}
+												</h4>
+											</div>
+										</div>
+										<button
+											onClick={() => setShowGoalModal(true)}
+											className="w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-3 bg-indigo-500 hover:bg-indigo-400 rounded-xl sm:rounded-2xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2"
+										>
+											<Target size={16} className="sm:hidden" />
+											<Target size={18} className="hidden sm:block" />
+											새 목표 추가
+										</button>
+									</div>
+								</div>
+
+								{/* 목표 프로그레스 바 목록 */}
+								{isLoadingGoals ? (
+									<div className="flex items-center justify-center py-6 sm:py-8">
+										<Loader2 size={24} className="animate-spin text-indigo-400" />
+									</div>
+								) : customGoals.length > 0 ? (
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
+										{customGoals.map(goal => {
+											const progress = getGoalProgress(goal);
+											const currentValue = getGoalCurrentValue(goal);
+											const dDayInfo = calculateDDay(goal.period, goal.created_at);
+											const unit = goalTypeDefaults[goal.goal_type as GoalType]?.unit || '';
+											return (
+												<div key={goal.id} className="bg-white/5 p-4 sm:p-5 rounded-xl sm:rounded-2xl group">
+													<div className="flex justify-between items-start mb-2 sm:mb-3">
+														<div className="flex-1 min-w-0 pr-2">
+															<p className="text-xs sm:text-sm font-bold text-white mb-1 truncate">{goal.name}</p>
+															<div className="flex items-center gap-2 flex-wrap">
+																<p className="text-[10px] sm:text-xs text-slate-400">{getGoalTypeLabel(goal.goal_type as GoalType)}</p>
+																{dDayInfo ? (
+																	<span className={`text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded ${dDayInfo.dDay <= 0 ? 'bg-red-500/20 text-red-400' : dDayInfo.dDay <= 3 ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+																		{getDDayText(dDayInfo.dDay)}
+																	</span>
+																) : (
+																	<span className="text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400">
+																		기한없음
+																	</span>
+																)}
+															</div>
 														</div>
+														<button
+															onClick={() => handleDeleteGoal(goal.id)}
+															className="p-1.5 sm:p-2 hover:bg-white/10 rounded-lg opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0"
+														>
+															<Trash2 size={14} className="sm:hidden text-red-400" />
+															<Trash2 size={16} className="hidden sm:block text-red-400" />
+														</button>
 													</div>
-												)}
-												<div className="flex items-start gap-8">
-													<div className={`w-16 h-16 rounded-[1.75rem] flex items-center justify-center transition-all duration-500 z-10 ${i === 4 ? "bg-emerald-500 text-white shadow-xl" : i === 0 ? "bg-indigo-600 text-white shadow-xl" : "bg-slate-50 text-slate-400"}`}>{i === 0 ? <Users size={28} /> : i === 1 ? <Eye size={28} /> : i === 2 ? <ShoppingCart size={28} /> : i === 3 ? <CreditCard size={28} /> : <CheckCircle2 size={28} />}</div>
-													<div className="flex-1 pt-1">
-														<div className="flex justify-between items-baseline mb-3">
-															<span className="text-[16px] font-bold text-slate-700">{f.step}</span>
-															<span className="text-xl font-black text-slate-900 tracking-tighter">{getScaledValue(f.count).toLocaleString()}명</span>
-														</div>
-														<div className="w-full bg-slate-50 h-2.5 rounded-full overflow-hidden border border-slate-100">
-															<div className={`h-full rounded-full transition-all duration-1000 ${i === 4 ? "bg-emerald-500" : "bg-indigo-500"}`} style={{ width: `${f.percentage}%` }}></div>
-														</div>
+													<div className="flex justify-between text-xs sm:text-sm font-bold mb-2">
+														<span className="text-slate-400">
+															{goal.period === 'unlimited' ? '기한없음' : dDayInfo ? `${dDayInfo.targetDate}까지` : goal.period === 'daily' ? '일간' : goal.period === 'weekly' ? '주간' : '월간'}
+														</span>
+														<span className="text-white text-right">
+															{goal.goal_type === 'bounce_rate'
+																? `${currentValue.toFixed(1)}% / ${goal.target_value}%`
+																: `${Math.round(currentValue).toLocaleString()}${unit} / ${goal.target_value.toLocaleString()}${unit}`
+															}
+														</span>
+													</div>
+													<div className="bg-white/10 h-2.5 sm:h-3 rounded-full overflow-hidden">
+														<div
+															className={`h-full bg-gradient-to-r ${getGoalColor(goal.goal_type as GoalType)} rounded-full transition-all duration-1000`}
+															style={{ width: `${progress}%` }}
+														></div>
+													</div>
+													<div className="flex justify-between items-center mt-1.5 sm:mt-2">
+														<span className="text-[10px] sm:text-xs text-slate-500">
+															{goal.goal_type === 'bounce_rate' ? '낮을수록 좋음' : ''}
+														</span>
+														<p className="text-[10px] sm:text-xs font-bold text-indigo-400">{progress.toFixed(1)}% 달성</p>
 													</div>
 												</div>
-											</div>
-										);
-									});
-								})()}
+											);
+										})}
+									</div>
+								) : (
+									<div className="bg-white/5 p-6 sm:p-8 rounded-xl sm:rounded-2xl text-center">
+										<p className="text-slate-400 mb-3 sm:mb-4 text-sm sm:text-base">아직 설정된 목표가 없습니다.</p>
+										<button
+											onClick={() => setShowGoalModal(true)}
+											className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all"
+										>
+											첫 번째 목표 만들기
+										</button>
+									</div>
+								)}
 							</div>
 						</div>
-						<div className="lg:col-span-6 space-y-7">
-							<div className="bg-slate-900 p-8 rounded-[2.5rem] text-white flex items-center justify-between shadow-2xl relative overflow-hidden group">
-								<div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 rounded-full blur-3xl -mr-16 -mt-16 group-hover:bg-rose-500/20 transition-all duration-700"></div>
-								<div className="flex gap-6 items-center relative z-10">
-									<div className="w-16 h-16 bg-rose-500 rounded-[1.75rem] flex items-center justify-center shadow-lg shadow-rose-500/20">
-										<Zap size={30} fill="currentColor" />
+
+						{/* 최적화 팁 */}
+						<div className="bg-white p-5 sm:p-6 lg:p-8 rounded-2xl sm:rounded-[2rem] lg:rounded-[2.5rem] border border-slate-200 shadow-sm">
+							<h3 className="text-base sm:text-lg lg:text-xl font-black mb-4 sm:mb-5 lg:mb-6 flex items-center gap-2 sm:gap-3">
+								<div className="w-8 h-8 sm:w-9 sm:h-9 lg:w-10 lg:h-10 bg-amber-100 rounded-lg sm:rounded-xl flex items-center justify-center flex-shrink-0">
+									<Lightbulb size={18} className="sm:hidden text-amber-500" />
+									<Lightbulb size={20} className="hidden sm:block lg:hidden text-amber-500" />
+									<Lightbulb size={22} className="hidden lg:block text-amber-500" />
+								</div>
+								최적화 팁
+							</h3>
+							<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+								{getOptimizationTips().map((tip, i) => (
+									<div key={i} className="flex items-start gap-3 sm:gap-4 p-4 sm:p-5 bg-slate-50 rounded-xl sm:rounded-2xl">
+										<div className={`w-8 h-8 sm:w-9 sm:h-9 lg:w-10 lg:h-10 ${tip.type === 'success' ? 'bg-emerald-100 text-emerald-600' : tip.type === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'} rounded-lg sm:rounded-xl flex items-center justify-center flex-shrink-0`}>
+											{tip.type === 'success' ? <Check size={16} className="sm:hidden" /> : tip.type === 'warning' ? <AlertTriangle size={16} className="sm:hidden" /> : <Lightbulb size={16} className="sm:hidden" />}
+											{tip.type === 'success' ? <Check size={20} className="hidden sm:block" /> : tip.type === 'warning' ? <AlertTriangle size={20} className="hidden sm:block" /> : <Lightbulb size={20} className="hidden sm:block" />}
+										</div>
+										<p className="text-xs sm:text-sm font-bold text-slate-600 leading-relaxed">{tip.message}</p>
 									</div>
-									<div>
-										<p className="text-[10px] font-black uppercase text-rose-400 tracking-widest mb-1">최대 유실 구간 발견</p>
-										<h4 className="text-xl font-black mb-1">'상품 조회 → 장바구니' 75% 이탈 중</h4>
-									</div>
-								</div>
-								<button className="px-6 py-3 bg-white/10 hover:bg-white/20 rounded-2xl text-xs font-black transition-all relative z-10">솔루션 보기</button>
-							</div>
-							<div className="grid grid-cols-2 gap-7">
-								<div className="bg-white p-7 rounded-[2rem] border border-slate-200 shadow-sm hover-lift">
-									<h5 className="text-sm font-black mb-4">기기별 전환율</h5>
-									<p className="text-2xl font-black text-slate-900">3.2% (Mobile)</p>
-								</div>
-								<div className="bg-white p-7 rounded-[2rem] border border-slate-200 shadow-sm hover-lift">
-									<h5 className="text-sm font-black mb-4">전환 소요 시간</h5>
-									<p className="text-2xl font-black text-slate-900">12m 45s</p>
-								</div>
-							</div>
-							<div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-								<h3 className="text-lg font-black mb-6">퍼널 최적화 점수</h3>
-								<div className="flex items-end gap-3 mb-4">
-									<span className="text-5xl font-black text-slate-900 tracking-tighter">64</span>
-									<span className="text-sm font-bold text-slate-400 mb-1.5">/ 100</span>
-								</div>
-								<div className="w-full bg-slate-50 h-3 rounded-full overflow-hidden border border-slate-100">
-									<div className="h-full bg-amber-500" style={{ width: "64%" }}></div>
-								</div>
-								<p className="text-xs font-bold text-slate-500 mt-4 leading-relaxed">장바구니 전환 단계에서 병목 현상이 발생하고 있습니다. 상세 페이지의 '장바구니 담기' 버튼의 시인성을 개선하면 점수를 높일 수 있습니다.</p>
+								))}
 							</div>
 						</div>
 					</div>
 				);
 			case TabID.PERFORMANCE:
+				// URL 프로젝트인 경우 외부 사이트라 성능 측정 불가 안내
+				if (currentProject?.source_type === "URL") {
+					return (
+						<div className="space-y-8 animate-reveal">
+							<div className="bg-white p-12 rounded-[3rem] border border-slate-200 shadow-sm text-center">
+								<div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
+									<Globe size={40} className="text-slate-300" />
+								</div>
+								<h3 className="text-2xl font-black text-slate-900 mb-3">외부 사이트 성능 측정</h3>
+								<p className="text-slate-500 mb-6 max-w-lg mx-auto">
+									URL로 가져온 프로젝트는 외부 호스팅 사이트입니다. 성능 데이터는 실제 사이트 방문자의 브라우저에서 수집됩니다.
+								</p>
+								<div className="flex items-center justify-center gap-3 mb-8">
+									<span className="text-sm font-bold text-slate-400">원본 사이트:</span>
+									<a
+										href={currentProject.source_url || "#"}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="text-indigo-600 font-bold hover:underline flex items-center gap-1"
+									>
+										{currentProject.source_url} <ArrowUpRight size={14} />
+									</a>
+								</div>
+								<button
+									onClick={handleRecrawl}
+									disabled={isRecrawling}
+									className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+								>
+									{isRecrawling ? <Loader2 size={18} className="animate-spin" /> : <RefreshCcw size={18} />}
+									사이트 다시 가져오기
+								</button>
+							</div>
+
+							{/* 실제 사용자 수집 데이터 (있는 경우에만 표시) */}
+							{webPerformanceData && webPerformanceData.sample_count > 0 && (
+								<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm">
+									<div className="flex items-center justify-between mb-8">
+										<div>
+											<h3 className="text-2xl font-black text-slate-900 tracking-tight">실제 사용자 성능 데이터</h3>
+											<p className="text-sm font-bold text-slate-400 mt-1">Core Web Vitals ({webPerformanceData.sample_count}개 샘플)</p>
+										</div>
+										<span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Real User Monitoring</span>
+									</div>
+									<div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
+										<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+											<div className="flex items-center gap-2 mb-3">
+												<span className="text-xs font-black text-slate-400 uppercase">LCP</span>
+											</div>
+											<p className="text-2xl font-black text-slate-900">{(webPerformanceData.lcp / 1000).toFixed(2)}s</p>
+										</div>
+										<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+											<div className="flex items-center gap-2 mb-3">
+												<span className="text-xs font-black text-slate-400 uppercase">FID</span>
+											</div>
+											<p className="text-2xl font-black text-slate-900">{webPerformanceData.fid}ms</p>
+										</div>
+										<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+											<div className="flex items-center gap-2 mb-3">
+												<span className="text-xs font-black text-slate-400 uppercase">CLS</span>
+											</div>
+											<p className="text-2xl font-black text-slate-900">{webPerformanceData.cls.toFixed(3)}</p>
+										</div>
+										<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+											<div className="flex items-center gap-2 mb-3">
+												<span className="text-xs font-black text-slate-400 uppercase">TTFB</span>
+											</div>
+											<p className="text-2xl font-black text-slate-900">{webPerformanceData.ttfb}ms</p>
+										</div>
+										<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+											<div className="flex items-center gap-2 mb-3">
+												<span className="text-xs font-black text-slate-400 uppercase">FCP</span>
+											</div>
+											<p className="text-2xl font-black text-slate-900">{(webPerformanceData.fcp / 1000).toFixed(2)}s</p>
+										</div>
+										<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+											<div className="flex items-center gap-2 mb-3">
+												<span className="text-xs font-black text-slate-400 uppercase">페이지 로드</span>
+											</div>
+											<p className="text-2xl font-black text-slate-900">{(webPerformanceData.page_load / 1000).toFixed(2)}s</p>
+										</div>
+									</div>
+								</div>
+							)}
+						</div>
+					);
+				}
+
+				// ZIP 프로젝트 - 자체 호스팅 사이트 성능 분석
+				const perfScore = performanceData?.performance_score ?? 0;
+				const perfScoreColor = perfScore >= 90 ? "#10b981" : perfScore >= 50 ? "#f59e0b" : "#ef4444";
+				const perfScoreText = perfScore >= 90 ? "매우 안정적인" : perfScore >= 50 ? "개선이 필요한" : "최적화가 시급한";
+				const perfMetricIcons: Record<string, React.ReactNode> = {
+					LCP: <Clock size={18} />,
+					TTFB: <Zap size={18} />,
+					FID: <MousePointerClick size={18} />,
+					CLS: <LayoutGrid size={18} />,
+					FCP: <Timer size={18} />,
+					TBT: <Monitor size={18} />,
+				};
+				const getStatusBgColor = (status: string) => {
+					if (status === "Good") return "bg-emerald-50 text-emerald-600";
+					if (status === "Needs Improvement") return "bg-amber-50 text-amber-600";
+					return "bg-rose-50 text-rose-600";
+				};
+				const getProgressWidth = (status: string) => {
+					if (status === "Good") return "100%";
+					if (status === "Needs Improvement") return "60%";
+					return "30%";
+				};
 				return (
 					<div className="space-y-8 animate-reveal">
+						{/* 자체 호스팅 사이트 성능 분석 - PageSpeed API 기반 */}
 						<div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 							<div className="lg:col-span-2 bg-white px-12 py-14 rounded-[3rem] border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-16 relative overflow-hidden">
 								<div className="relative flex-shrink-0">
 									<div className="w-44 h-44 rounded-full border-[6px] border-slate-50 flex flex-col items-center justify-center relative shadow-inner">
 										<svg className="absolute inset-0 w-full h-full -rotate-90">
-											<circle cx="50%" cy="50%" r="84" fill="transparent" stroke="#10b981" strokeWidth="6" strokeDasharray="527.5" strokeDashoffset={527.5 * (1 - 0.94)} strokeLinecap="round" className="transition-all duration-1000 ease-out" />
+											<circle cx="50%" cy="50%" r="84" fill="transparent" stroke={perfScoreColor} strokeWidth="6" strokeDasharray="527.5" strokeDashoffset={527.5 * (1 - perfScore / 100)} strokeLinecap="round" className="transition-all duration-1000 ease-out" />
 										</svg>
-										<span className="text-6xl font-black text-slate-900 tracking-tight">94</span>
+										<span className="text-6xl font-black text-slate-900 tracking-tight">{perfScore || "-"}</span>
 									</div>
 								</div>
 								<div className="flex-1 space-y-6">
 									<div className="space-y-2">
 										<h3 className="text-3xl font-black text-slate-900 tracking-tight">전체 성능 분석</h3>
 										<p className="text-slate-400 text-sm font-bold leading-relaxed max-w-md">
-											귀하의 사이트는 매우 안정적인 로딩 성능을 유지하고 있습니다. 사용자의 <span className="text-indigo-600">95% 이상</span>이 쾌적한 환경을 경험합니다.
+											{performanceData ? (
+												<>귀하의 사이트는 {perfScoreText} 로딩 성능을 보이고 있습니다. {perfScore >= 90 ? <>사용자의 <span className="text-indigo-600">95% 이상</span>이 쾌적한 환경을 경험합니다.</> : perfScore >= 50 ? "일부 항목의 최적화를 권장합니다." : "성능 최적화가 필요합니다."}</>
+											) : (
+												"성능 데이터를 불러오는 중입니다..."
+											)}
 										</p>
 									</div>
 									<div className="flex flex-wrap gap-3 pt-2">
-										{[
-											{ label: "이미지 최적화", icon: <Check size={14} />, color: "text-emerald-500" },
-											{ label: "CDN 활성화", icon: <Check size={14} />, color: "text-emerald-500" },
-											{ label: "JS 비동기 로드", icon: <Zap size={14} />, color: "text-indigo-500" },
-										].map((badge, i) => (
+										{performanceData?.optimizations?.length ? performanceData.optimizations.map((opt, i) => (
 											<div key={i} className="flex items-center gap-2 px-3.5 py-1.5 border border-slate-100 rounded-full text-[11px] font-black bg-slate-50/50">
-												<span className={badge.color}>{badge.icon}</span>
-												<span className="text-slate-600">{badge.label}</span>
+												<span className={opt.passed ? "text-emerald-500" : "text-amber-500"}>{opt.passed ? <Check size={14} /> : <AlertTriangle size={14} />}</span>
+												<span className="text-slate-600">{opt.label}</span>
 											</div>
-										))}
+										)) : (
+											<span className="text-slate-400 text-xs">최적화 정보 없음</span>
+										)}
 									</div>
 								</div>
 							</div>
@@ -1426,34 +2220,30 @@ const App: React.FC = () => {
 								<div>
 									<h4 className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em] mb-8 flex items-center gap-2">리소스 최적화 현황</h4>
 									<div className="space-y-6">
-										{[
-											{ label: "이미지 최적화 (WebP)", status: "GOOD", color: "text-emerald-400" },
-											{ label: "서버 응답 속도 (TTFB)", status: "0.2s", color: "text-emerald-400" },
-											{ label: "스크립트 압축률 (Gzip)", status: "85%", color: "text-indigo-400" },
-										].map((r, i) => (
+										{performanceData?.optimizations?.length ? performanceData.optimizations.map((opt, i) => (
 											<div key={i} className="flex justify-between items-center group cursor-default">
-												<span className="text-[13px] font-bold text-slate-400 group-hover:text-slate-200 transition-colors">{r.label}</span>
-												<span className={`text-xs font-black ${r.color}`}>{r.status}</span>
+												<span className="text-[13px] font-bold text-slate-400 group-hover:text-slate-200 transition-colors">{opt.label}</span>
+												<span className={`text-xs font-black ${opt.passed ? "text-emerald-400" : "text-amber-400"}`}>{opt.passed ? "GOOD" : "개선 필요"}</span>
 											</div>
-										))}
+										)) : (
+											<span className="text-slate-500 text-xs">데이터 없음</span>
+										)}
 									</div>
 								</div>
-								<button className="w-full mt-10 bg-white/5 hover:bg-white/10 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all border border-white/5">상세 진단 보고서</button>
+								<button
+									onClick={() => setShowRedeployModal(true)}
+									className="w-full mt-10 bg-indigo-600 hover:bg-indigo-700 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+								>
+									<Upload size={14} /> 새 버전 배포
+								</button>
 							</div>
 						</div>
 
 						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-							{[
-								{ id: "LCP", label: "Largest Contentful Paint", val: "0.8s", status: "Good", color: "bg-emerald-500", desc: "가장 큰 이미지나 텍스트 블록이 렌더링되는 시간입니다.", icon: <Clock size={18} /> },
-								{ id: "TTFB", label: "Time to First Byte", val: "185ms", status: "Good", color: "bg-emerald-500", desc: "서버가 요청을 받은 후 첫 바이트를 보내는 데 걸리는 시간입니다.", icon: <Zap size={18} /> },
-								{ id: "FID", label: "First Input Delay", val: "12ms", status: "Good", color: "bg-emerald-500", desc: "사용자가 처음 클릭했을 때 브라우저가 반응을 시작하는 지연 시간입니다.", icon: <MousePointerClick size={18} /> },
-								{ id: "CLS", label: "Cumulative Layout Shift", val: "0.02", status: "Good", color: "bg-emerald-500", desc: "로딩 중 예기치 않은 레이아웃 이동이 얼마나 발생하는지 측정합니다.", icon: <LayoutGrid size={18} /> },
-								{ id: "FCP", label: "First Contentful Paint", val: "0.4s", status: "Good", color: "bg-emerald-500", desc: "브라우저가 DOM 콘텐츠의 첫 번째 부분을 렌더링하는 시간입니다.", icon: <Timer size={18} /> },
-								{ id: "TBT", label: "Total Blocking Time", val: "80ms", status: "Good", color: "bg-emerald-500", desc: "입력 응답성이 차단되는 전체 시간의 합계입니다.", icon: <Monitor size={18} /> },
-							].map((m, i) => (
+							{performanceData?.metrics?.length ? performanceData.metrics.map((m) => (
 								<div key={m.id} className="bg-white p-7 rounded-[2.25rem] border border-slate-200 shadow-sm hover-lift group relative overflow-hidden">
 									<div className="flex justify-between items-start mb-6">
-										<div className="p-3 bg-slate-50 text-slate-400 rounded-2xl group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-all">{m.icon}</div>
+										<div className="p-3 bg-slate-50 text-slate-400 rounded-2xl group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-all">{perfMetricIcons[m.id] || <Activity size={18} />}</div>
 										<div className="relative group/tt">
 											<Info size={14} className="text-slate-300 cursor-help" />
 											<div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-3 bg-slate-900 text-white text-[10px] rounded-xl opacity-0 group-hover/tt:opacity-100 transition-all z-20 pointer-events-none font-bold leading-relaxed">{m.desc}</div>
@@ -1462,16 +2252,80 @@ const App: React.FC = () => {
 									<div className="space-y-2">
 										<div className="flex items-baseline gap-2">
 											<span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{m.id}</span>
-											<span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[9px] font-black rounded-md">{m.status}</span>
+											<span className={`px-2 py-0.5 text-[9px] font-black rounded-md ${getStatusBgColor(m.status)}`}>{m.status}</span>
 										</div>
-										<div className="text-3xl font-black text-slate-900 tracking-tighter">{m.val}</div>
+										<div className="text-3xl font-black text-slate-900 tracking-tighter">{m.val || "-"}</div>
 										<div className="w-full bg-slate-100 h-1.5 rounded-full mt-4 overflow-hidden">
-											<div className={`h-full ${m.color} rounded-full transition-all duration-1000`} style={{ width: "85%" }}></div>
+											<div className={`h-full ${m.color} rounded-full transition-all duration-1000`} style={{ width: getProgressWidth(m.status) }}></div>
 										</div>
 									</div>
 								</div>
-							))}
+							)) : (
+								<div className="col-span-3 text-center py-16 text-slate-400">
+									{isAnalyticsLoading ? "성능 데이터를 불러오는 중..." : "성능 데이터가 없습니다"}
+								</div>
+							)}
 						</div>
+
+						{/* 실제 사용자 수집 데이터 섹션 */}
+						{webPerformanceData && webPerformanceData.sample_count > 0 && (
+							<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm">
+								<div className="flex items-center justify-between mb-8">
+									<div>
+										<h3 className="text-2xl font-black text-slate-900 tracking-tight">실제 사용자 성능 데이터</h3>
+										<p className="text-sm font-bold text-slate-400 mt-1">Core Web Vitals (자체 수집, {webPerformanceData.sample_count}개 샘플)</p>
+									</div>
+									<span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Real User Monitoring</span>
+								</div>
+								<div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-6">
+									<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+										<div className="flex items-center gap-2 mb-3">
+											<span className="text-xs font-black text-slate-400 uppercase">LCP</span>
+											<span className={`px-2 py-0.5 text-[9px] font-black rounded-md ${webPerformanceData.lcp_score === 'good' ? 'bg-emerald-50 text-emerald-600' : webPerformanceData.lcp_score === 'needs_improvement' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600'}`}>
+												{webPerformanceData.lcp_score === 'good' ? 'Good' : webPerformanceData.lcp_score === 'needs_improvement' ? 'Needs Improvement' : 'Poor'}
+											</span>
+										</div>
+										<p className="text-2xl font-black text-slate-900">{(webPerformanceData.lcp / 1000).toFixed(2)}s</p>
+									</div>
+									<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+										<div className="flex items-center gap-2 mb-3">
+											<span className="text-xs font-black text-slate-400 uppercase">FID</span>
+											<span className={`px-2 py-0.5 text-[9px] font-black rounded-md ${webPerformanceData.fid_score === 'good' ? 'bg-emerald-50 text-emerald-600' : webPerformanceData.fid_score === 'needs_improvement' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600'}`}>
+												{webPerformanceData.fid_score === 'good' ? 'Good' : webPerformanceData.fid_score === 'needs_improvement' ? 'Needs Improvement' : 'Poor'}
+											</span>
+										</div>
+										<p className="text-2xl font-black text-slate-900">{webPerformanceData.fid}ms</p>
+									</div>
+									<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+										<div className="flex items-center gap-2 mb-3">
+											<span className="text-xs font-black text-slate-400 uppercase">CLS</span>
+											<span className={`px-2 py-0.5 text-[9px] font-black rounded-md ${webPerformanceData.cls_score === 'good' ? 'bg-emerald-50 text-emerald-600' : webPerformanceData.cls_score === 'needs_improvement' ? 'bg-amber-50 text-amber-600' : 'bg-rose-50 text-rose-600'}`}>
+												{webPerformanceData.cls_score === 'good' ? 'Good' : webPerformanceData.cls_score === 'needs_improvement' ? 'Needs Improvement' : 'Poor'}
+											</span>
+										</div>
+										<p className="text-2xl font-black text-slate-900">{webPerformanceData.cls.toFixed(3)}</p>
+									</div>
+									<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+										<div className="flex items-center gap-2 mb-3">
+											<span className="text-xs font-black text-slate-400 uppercase">TTFB</span>
+										</div>
+										<p className="text-2xl font-black text-slate-900">{webPerformanceData.ttfb}ms</p>
+									</div>
+									<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+										<div className="flex items-center gap-2 mb-3">
+											<span className="text-xs font-black text-slate-400 uppercase">FCP</span>
+										</div>
+										<p className="text-2xl font-black text-slate-900">{(webPerformanceData.fcp / 1000).toFixed(2)}s</p>
+									</div>
+									<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
+										<div className="flex items-center gap-2 mb-3">
+											<span className="text-xs font-black text-slate-400 uppercase">페이지 로드</span>
+										</div>
+										<p className="text-2xl font-black text-slate-900">{(webPerformanceData.page_load / 1000).toFixed(2)}s</p>
+									</div>
+								</div>
+							</div>
+						)}
 					</div>
 				);
 			default:
@@ -1578,7 +2432,7 @@ const App: React.FC = () => {
 		<div className="min-h-screen flex flex-col bg-slate-50 selection:bg-indigo-100">
 			{currentView === ViewID.ANALYTICS ? (
 				<div className="flex flex-1">
-					<Sidebar activeTab={activeTab} onTabChange={handleTabChange} subscription={subscription} />
+					<Sidebar activeTab={activeTab} onTabChange={handleTabChange} subscription={subscription} user={user} onLogout={handleLogout} />
 					{renderDashboardView()}
 				</div>
 			) : (
@@ -1594,6 +2448,90 @@ const App: React.FC = () => {
 			)}
 
 			<ReportModal isOpen={isReportModalOpen} onClose={() => setIsReportModalOpen(false)} activeTab={activeTab} periodLabel={formattedPeriodLabel} insights={insights} getScaledValue={getScaledValue} />
+
+			{/* 재배포 모달 (ZIP 프로젝트용) */}
+			{showRedeployModal && (
+				<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[200]" onClick={() => setShowRedeployModal(false)}>
+					<div className="bg-white rounded-[2rem] p-8 w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
+						<div className="flex items-center justify-between mb-6">
+							<h3 className="text-xl font-black text-slate-900">프로젝트 재배포</h3>
+							<button onClick={() => setShowRedeployModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
+								<X size={20} className="text-slate-400" />
+							</button>
+						</div>
+						<p className="text-sm text-slate-500 mb-6">
+							새로운 ZIP 파일을 업로드하여 <span className="font-bold text-indigo-600">{currentProject?.subdomain}.artify.page</span>를 업데이트합니다.
+						</p>
+						<div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center hover:border-indigo-300 transition-colors">
+							<input
+								type="file"
+								accept=".zip"
+								onChange={(e) => setRedeployFile(e.target.files?.[0] || null)}
+								className="hidden"
+								id="redeploy-file"
+							/>
+							<label htmlFor="redeploy-file" className="cursor-pointer">
+								{redeployFile ? (
+									<div className="flex items-center justify-center gap-3">
+										<FileArchive size={24} className="text-indigo-600" />
+										<span className="font-bold text-slate-900">{redeployFile.name}</span>
+										<span className="text-sm text-slate-400">({(redeployFile.size / 1024 / 1024).toFixed(2)} MB)</span>
+									</div>
+								) : (
+									<>
+										<Upload size={32} className="mx-auto text-slate-300 mb-3" />
+										<p className="font-bold text-slate-600 mb-1">ZIP 파일을 선택하세요</p>
+										<p className="text-sm text-slate-400">클릭하여 파일 선택</p>
+									</>
+								)}
+							</label>
+						</div>
+						<div className="flex gap-3 mt-6">
+							<button
+								onClick={() => {
+									setShowRedeployModal(false);
+									setRedeployFile(null);
+								}}
+								className="flex-1 py-3 px-6 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+							>
+								취소
+							</button>
+							<button
+								onClick={handleRedeploy}
+								disabled={!redeployFile || isRedeploying}
+								className="flex-1 py-3 px-6 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+							>
+								{isRedeploying ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+								{isRedeploying ? "재배포 중..." : "재배포"}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* 토스트 알림 */}
+			<div
+				className={`fixed bottom-6 right-6 z-[300] transition-all duration-300 ${
+					toast.visible ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0 pointer-events-none'
+				}`}
+			>
+				<div className={`flex items-center gap-3 px-5 py-4 rounded-2xl shadow-2xl backdrop-blur-sm ${
+					toast.type === 'success' ? 'bg-emerald-500 text-white' :
+					toast.type === 'error' ? 'bg-rose-500 text-white' :
+					'bg-slate-900 text-white'
+				}`}>
+					{toast.type === 'success' && <Check size={20} />}
+					{toast.type === 'error' && <AlertCircle size={20} />}
+					{toast.type === 'info' && <Info size={20} />}
+					<span className="font-bold text-sm">{toast.message}</span>
+					<button
+						onClick={() => setToast(prev => ({ ...prev, visible: false }))}
+						className="ml-2 p-1 hover:bg-white/20 rounded-lg transition-colors"
+					>
+						<X size={16} />
+					</button>
+				</div>
+			</div>
 		</div>
 	);
 };
