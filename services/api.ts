@@ -41,22 +41,6 @@ async function apiRequest<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-
-    // User not found 에러 시 토큰 삭제 및 재로그인 유도
-    // (DB 마이그레이션 등으로 사용자 데이터가 없어진 경우)
-    if (response.status === 404 && error.detail === 'User not found') {
-      removeAccessToken();
-      window.location.href = '/';
-      throw new Error('세션이 만료되었습니다. 다시 로그인해주세요.');
-    }
-
-    // 401 Unauthorized 에러 시에도 토큰 삭제
-    if (response.status === 401) {
-      removeAccessToken();
-      window.location.href = '/';
-      throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
-    }
-
     throw new Error(error.detail || `HTTP Error: ${response.status}`);
   }
 
@@ -83,21 +67,6 @@ async function apiRequestFormData<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-
-    // User not found 에러 시 토큰 삭제 및 재로그인 유도
-    if (response.status === 404 && error.detail === 'User not found') {
-      removeAccessToken();
-      window.location.href = '/';
-      throw new Error('세션이 만료되었습니다. 다시 로그인해주세요.');
-    }
-
-    // 401 Unauthorized 에러 시에도 토큰 삭제
-    if (response.status === 401) {
-      removeAccessToken();
-      window.location.href = '/';
-      throw new Error('인증이 만료되었습니다. 다시 로그인해주세요.');
-    }
-
     throw new Error(error.detail || `HTTP Error: ${response.status}`);
   }
 
