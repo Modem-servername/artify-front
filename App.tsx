@@ -13,7 +13,7 @@ import { useAuth, useProjects, useAnalytics } from "./hooks";
 import { Project, AnalyticsSummary, CustomGoal, CreateGoalRequest, GoalType, customGoalsApi, usageApi, UsageStats, projectApi } from "./services/api";
 
 // 🔧 로컬 테스트용 - 배포 전에 false로 변경하세요!
-const LOCAL_TEST_MODE = true;
+const LOCAL_TEST_MODE = false;
 
 const App: React.FC = () => {
 	const { t, i18n } = useTranslation();
