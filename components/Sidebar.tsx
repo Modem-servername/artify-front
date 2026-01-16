@@ -1,8 +1,9 @@
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { NAVIGATION_ITEMS } from '../constants';
 import { TabID, UserSubscription } from '../types';
-import { BarChart3, LogOut, User } from 'lucide-react';
+import { BarChart3, LogOut, User, Globe } from 'lucide-react';
 
 interface UserInfo {
   email: string;
@@ -19,8 +20,14 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription, user, onLogout }) => {
+  const { t, i18n } = useTranslation();
   const usagePercent = Math.min(100, (subscription.usage_current_period / subscription.request_limit) * 100);
   const isBillingTab = activeTab.startsWith('billing');
+
+  const toggleLanguage = () => {
+    const newLang = i18n.language === 'ko' ? 'en' : 'ko';
+    i18n.changeLanguage(newLang);
+  };
 
   // 숫자를 K/M 단위로 포맷
   const formatNumber = (num: number): string => {
@@ -47,18 +54,27 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription,
 
   return (
     <aside className="w-60 bg-white border-r border-slate-200 flex flex-col h-screen fixed left-0 top-0 z-[80]">
-      <div className="p-7 flex items-center gap-3.5 group cursor-pointer" onClick={() => onTabChange(TabID.OVERVIEW)}>
-        <div className="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-100 transform group-hover:rotate-12 transition-transform duration-300">
-          <BarChart3 size={24} />
+      <div className="p-7 flex items-center gap-3.5">
+        <div className="group cursor-pointer flex items-center gap-3.5 flex-1" onClick={() => onTabChange(TabID.OVERVIEW)}>
+          <div className="w-11 h-11 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-100 transform group-hover:rotate-12 transition-transform duration-300">
+            <BarChart3 size={24} />
+          </div>
+          <div>
+            <h1 className="font-black text-xl tracking-tighter text-slate-900">ARTIFY</h1>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{subscription.plan_id}</p>
+          </div>
         </div>
-        <div>
-          <h1 className="font-black text-xl tracking-tighter text-slate-900">ARTIFY</h1>
-          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{subscription.plan_id}</p>
-        </div>
+        <button
+          onClick={toggleLanguage}
+          className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
+          title={i18n.language === 'ko' ? 'Switch to English' : '한국어로 변경'}
+        >
+          <Globe size={18} />
+        </button>
       </div>
 
       <nav className="flex-1 px-3.5 py-4 space-y-1.5">
-        <p className="px-3.5 text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3.5">Analytics Engine</p>
+        <p className="px-3.5 text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3.5">{t('nav.analyticsEngine')}</p>
         {NAVIGATION_ITEMS.map((item) => {
           const isActive = activeTab === item.id;
           return (
@@ -74,7 +90,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription,
               <span className={`transition-transform duration-300 ${isActive ? 'scale-105' : 'group-hover:scale-105 group-hover:text-indigo-500'}`}>
                 {item.icon}
               </span>
-              {item.label}
+              {t(item.labelKey)}
               
               {isActive && (
                 <div className="absolute right-3 w-1.5 h-1.5 bg-white/40 rounded-full animate-pulse"></div>
@@ -107,7 +123,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription,
               <button
                 onClick={onLogout}
                 className="p-2 text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all duration-200"
-                title="로그아웃"
+                title={t('sidebar.logout')}
               >
                 <LogOut size={16} />
               </button>
@@ -120,7 +136,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription,
         <div className="bg-slate-900 rounded-[1.75rem] p-5 text-white relative overflow-hidden group/card shadow-xl">
           <div className="absolute -top-10 -right-10 w-28 h-28 bg-indigo-500/10 rounded-full blur-3xl group-hover/card:scale-150 transition-transform duration-1000"></div>
           
-          <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-1.5">요청 사용량</p>
+          <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-1.5">{t('sidebar.requestUsage')}</p>
           <p className="text-sm font-black mb-3.5 tracking-tight uppercase">
             {subscription.plan_id} {subscription.plan_id === 'free' ? '' : 'Plus'}
           </p>
@@ -134,7 +150,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription,
             </div>
             <div className="flex justify-between items-center">
               <span className="text-[9px] font-bold text-slate-400">
-                {formatNumber(subscription.usage_current_period)} / {formatNumber(subscription.request_limit)} 건
+                {formatNumber(subscription.usage_current_period)} / {formatNumber(subscription.request_limit)} {t('sidebar.count')}
               </span>
               <span className={`text-[9px] font-black ${getUsageTextColorClass()}`}>{usagePercent.toFixed(0)}%</span>
             </div>
@@ -146,7 +162,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange, subscription,
               isBillingTab ? 'bg-indigo-600 text-white' : 'bg-white/10 hover:bg-white/20 text-white'
             }`}
           >
-            {subscription.plan_id === 'enterprise' ? '플랜 관리' : '플랜 업그레이드'}
+            {subscription.plan_id === 'enterprise' ? t('sidebar.managePlan') : t('sidebar.upgradePlan')}
           </button>
         </div>
       </div>

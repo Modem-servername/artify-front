@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import Sidebar from "./components/Sidebar";
 import { TabID, ViewID, InsightResponse, TimeRange, ChartDataPoint, UserSubscription, PlanID } from "./types";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, Cell, PieChart, Pie } from "recharts";
@@ -11,9 +12,18 @@ import { generateLocalInsights } from "./services/insightGenerator";
 import { useAuth, useProjects, useAnalytics } from "./hooks";
 import { Project, AnalyticsSummary, CustomGoal, CreateGoalRequest, GoalType, customGoalsApi, usageApi, UsageStats, projectApi } from "./services/api";
 
+// 🔧 로컬 테스트용 - 배포 전에 false로 변경하세요!
+const LOCAL_TEST_MODE = true;
+
 const App: React.FC = () => {
+	const { t, i18n } = useTranslation();
+
 	// API Hooks
-	const { user, isAuthenticated, isLoading: isAuthLoading, login, logout } = useAuth();
+	const { user: realUser, isAuthenticated: realIsAuthenticated, isLoading: isAuthLoading, login, logout } = useAuth();
+
+	// 테스트 모드일 때 mock 데이터 사용
+	const user = LOCAL_TEST_MODE ? { email: 'test@test.com', name: 'Test User', picture: '' } : realUser;
+	const isAuthenticated = LOCAL_TEST_MODE ? true : realIsAuthenticated;
 	const {
 		projects,
 		currentProject,
@@ -43,8 +53,9 @@ const App: React.FC = () => {
 		fetchWebPerformance,
 	} = useAnalytics();
 
-	// Navigation State - localStorage에서 복원
+	// Navigation State - localStorage에서 복원 (테스트 모드면 바로 ANALYTICS)
 	const [currentView, setCurrentView] = useState<ViewID>(() => {
+		if (LOCAL_TEST_MODE) return ViewID.ANALYTICS;
 		const saved = localStorage.getItem('artify_currentView');
 		return saved ? (saved as ViewID) : ViewID.CONNECT;
 	});
@@ -280,11 +291,11 @@ const App: React.FC = () => {
 			setCustomGoals(prev => [...prev, created]);
 			setShowGoalModal(false);
 			setNewGoal({ name: '', goal_type: 'visitors', target_value: 1000, period: 'daily' });
-			showToast('목표가 추가되었습니다.', 'success');
+			showToast(t('goals.goalAdded'), 'success');
 		} catch (error) {
 			console.error('Failed to create goal:', error);
-			const errorMessage = error instanceof Error ? error.message : '알 수 없는 오류';
-			showToast(`목표 추가 실패: ${errorMessage}`, 'error');
+			const errorMessage = error instanceof Error ? error.message : t('goals.unknownError');
+			showToast(`${t('goals.goalAddFailed')}: ${errorMessage}`, 'error');
 		}
 	};
 
@@ -294,22 +305,22 @@ const App: React.FC = () => {
 		try {
 			await customGoalsApi.deleteGoal(currentProject.id, goalId);
 			setCustomGoals(prev => prev.filter(g => g.id !== goalId));
-			showToast('목표가 삭제되었습니다.', 'success');
+			showToast(t('goals.goalDeleted'), 'success');
 		} catch (error) {
 			console.error('Failed to delete goal:', error);
-			showToast('목표 삭제에 실패했습니다.', 'error');
+			showToast(t('goals.goalDeleteFailed'), 'error');
 		}
 	};
 
 	// 목표 타입 라벨
 	const getGoalTypeLabel = (type: GoalType): string => {
 		const labels: Record<GoalType, string> = {
-			visitors: '일일 방문자',
-			stay_time: '평균 체류시간(초)',
-			page_views: '페이지뷰',
-			bounce_rate: '이탈률(%)',
-			sessions: '세션 수',
-			new_visitors: '신규 방문자'
+			visitors: t('goals.visitors'),
+			stay_time: t('goals.stayTime'),
+			page_views: t('goals.pageViews'),
+			bounce_rate: t('goals.bounceRate'),
+			sessions: t('goals.sessions'),
+			new_visitors: t('goals.newVisitors')
 		};
 		return labels[type] || type;
 	};
@@ -359,11 +370,11 @@ const App: React.FC = () => {
 		const y = currentDate.getFullYear();
 		const m = currentDate.getMonth() + 1;
 		const d = currentDate.getDate();
-		if (timeRange === TimeRange.DAY) return `${y}년 ${m}월 ${d}일`;
-		if (timeRange === TimeRange.WEEK) return `${y}년 ${m}월 ${Math.ceil(d / 7)}주차`;
-		if (timeRange === TimeRange.MONTH) return `${y}년 ${m}월`;
-		return `${y}년 전체`;
-	}, [currentDate, timeRange]);
+		if (timeRange === TimeRange.DAY) return `${y}${t('date.year')} ${m}${t('date.month')} ${d}${t('date.day')}`;
+		if (timeRange === TimeRange.WEEK) return `${y}${t('date.year')} ${m}${t('date.month')} ${Math.ceil(d / 7)}${t('date.week')}`;
+		if (timeRange === TimeRange.MONTH) return `${y}${t('date.year')} ${m}${t('date.month')}`;
+		return `${y}${t('date.year')} ${t('date.entire')}`;
+	}, [currentDate, timeRange, t]);
 
 	const handleNavigateTime = (direction: "prev" | "next") => {
 		const newDate = new Date(currentDate);
@@ -406,7 +417,7 @@ const App: React.FC = () => {
 			if (timeRange === TimeRange.WEEK) {
 				// 최근 7일
 				const recentDays = dailyData.slice(-7);
-				const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+				const dayNames = [t('dayNames.sun'), t('dayNames.mon'), t('dayNames.tue'), t('dayNames.wed'), t('dayNames.thu'), t('dayNames.fri'), t('dayNames.sat')];
 				return recentDays.map((item) => {
 					const date = new Date(item.date);
 					return {
@@ -424,7 +435,7 @@ const App: React.FC = () => {
 				return dailyData.slice(-30).map((item) => {
 					const date = new Date(item.date);
 					return {
-						name: `${date.getDate()}일`,
+						name: `${date.getDate()}${t('date.day')}`,
 						visits: item.visits,
 						conversions: Math.floor(item.visits * 0.05),
 						stayTime: item.avgSessionDuration,
@@ -450,7 +461,7 @@ const App: React.FC = () => {
 				return Object.entries(monthlyData)
 					.sort(([a], [b]) => parseInt(a) - parseInt(b))
 					.map(([month, data]) => ({
-						name: `${parseInt(month)}월`,
+						name: `${parseInt(month)}${t('date.month')}`,
 						visits: data.visits,
 						conversions: Math.floor(data.visits * 0.05),
 						stayTime: data.count > 0 ? data.stayTime / data.count : 0,
@@ -522,14 +533,14 @@ const App: React.FC = () => {
 		customGoals.forEach(goal => {
 			const progress = getGoalProgress(goal);
 			if (progress >= 100) {
-				tips.push({ type: 'success', message: `${goal.name} 목표를 달성했습니다! 목표를 상향 조정해보세요.` });
+				tips.push({ type: 'success', message: t('tips.goalAchieved', { name: goal.name }) });
 			} else if (progress >= 70) {
-				tips.push({ type: 'info', message: `${goal.name} 목표 달성까지 거의 다 왔습니다. 조금만 더 힘내세요!` });
+				tips.push({ type: 'info', message: t('tips.goalAlmost', { name: goal.name }) });
 			} else if (progress < 30) {
 				if (goal.goal_type === 'visitors') {
-					tips.push({ type: 'warning', message: 'SEO 최적화와 소셜 미디어 홍보로 방문자 유입을 늘려보세요.' });
+					tips.push({ type: 'warning', message: t('tips.seoTip') });
 				} else if (goal.goal_type === 'stay_time') {
-					tips.push({ type: 'warning', message: '체류시간이 목표에 미달합니다. 콘텐츠 품질을 점검하세요.' });
+					tips.push({ type: 'warning', message: t('tips.stayTimeTip') });
 				}
 			}
 		});
@@ -537,16 +548,16 @@ const App: React.FC = () => {
 		// 기본 팁 (목표가 없거나 팁이 부족한 경우)
 		if (tips.length < 3) {
 			if (bounceRate > 70) {
-				tips.push({ type: 'warning', message: '이탈률이 높습니다. 랜딩 페이지 개선이 필요합니다.' });
+				tips.push({ type: 'warning', message: t('tips.highBounceRate') });
 			} else if (bounceRate < 40) {
-				tips.push({ type: 'success', message: '이탈률이 낮아 사용자 참여도가 좋습니다.' });
+				tips.push({ type: 'success', message: t('tips.lowBounceRate') });
 			} else {
-				tips.push({ type: 'info', message: 'CTA 버튼 위치와 디자인을 A/B 테스트해보세요.' });
+				tips.push({ type: 'info', message: t('tips.ctaTip') });
 			}
 		}
 
 		if (tips.length < 3 && customGoals.length === 0) {
-			tips.push({ type: 'info', message: '목표를 설정하여 사이트 성과를 체계적으로 관리해보세요.' });
+			tips.push({ type: 'info', message: t('tips.setGoalTip') });
 		}
 
 		return tips.slice(0, 3);
@@ -555,7 +566,7 @@ const App: React.FC = () => {
 	// 체류시간 포맷팅 (초 -> mm:ss)
 	const formatSessionTime = (seconds: number) => {
 		if (!seconds || isNaN(seconds) || seconds === 0) {
-			return "데이터 부족";
+			return t('metrics.noData');
 		}
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.floor(seconds % 60);
@@ -565,7 +576,7 @@ const App: React.FC = () => {
 	// 일평균 방문자 포맷팅
 	const formatDailyAverage = (value: number) => {
 		if (!value || isNaN(value) || value === 0) {
-			return "데이터 부족";
+			return t('metrics.noData');
 		}
 		return value.toLocaleString();
 	};
@@ -574,15 +585,15 @@ const App: React.FC = () => {
 	const getAverageVisitorLabel = () => {
 		switch (timeRange) {
 			case TimeRange.DAY:
-				return "시간당 평균";
+				return t('metrics.hourlyAvg');
 			case TimeRange.WEEK:
-				return "일평균 방문자";
+				return t('metrics.dailyAvg');
 			case TimeRange.MONTH:
-				return "일평균 방문자";
+				return t('metrics.dailyAvg');
 			case TimeRange.YEAR:
-				return "월평균 방문자";
+				return t('metrics.monthlyAvg');
 			default:
-				return "평균 방문자";
+				return t('metrics.avgVisitors');
 		}
 	};
 
@@ -595,7 +606,7 @@ const App: React.FC = () => {
 				{ label: "체류 시간", current: 262, change: 5.8 },
 				{ label: "신규 방문", current: getScaledValue(43120), change: 2.4 },
 			];
-			const result = await generateLocalInsights(activeTab, timeRange, metricStates, chartData);
+			const result = await generateLocalInsights(activeTab, timeRange, metricStates, chartData, t);
 			setInsights(result);
 		} catch (error) {
 			console.error("Failed to generate insights:", error);
@@ -608,7 +619,7 @@ const App: React.FC = () => {
 		if (currentView === ViewID.ANALYTICS && !isBillingPage) {
 			updateInsights();
 		}
-	}, [activeTab, timeRange, currentDate, currentView]);
+	}, [activeTab, timeRange, currentDate, currentView, i18n.language]);
 
 	const handleTabChange = (tab: TabID) => {
 		if (tab === activeTab) return;
@@ -631,12 +642,12 @@ const App: React.FC = () => {
 
 	const handleGenerateFromUrl = async () => {
 		if (!urlInput.trim()) {
-			setConnectError("홈페이지 주소를 입력해 주세요.");
+			setConnectError(t('connect.enterUrl'));
 			return;
 		}
 
 		if (!projectName.trim()) {
-			setConnectError("프로젝트 이름을 입력해 주세요.");
+			setConnectError(t('connect.enterProjectName'));
 			return;
 		}
 
@@ -658,7 +669,7 @@ const App: React.FC = () => {
 			setGeneratedUrl(`https://${project.full_domain}`);
 			selectProject(project);
 		} catch (error) {
-			setConnectError(error instanceof Error ? error.message : "프로젝트 생성에 실패했습니다.");
+			setConnectError(error instanceof Error ? error.message : t('connect.projectCreateFailed'));
 		} finally {
 			setIsGenerating(false);
 		}
@@ -672,12 +683,12 @@ const App: React.FC = () => {
 	const validateAndUploadFile = (file: File) => {
 		setConnectError(null);
 		if (!file.name.endsWith(".zip")) {
-			setConnectError("ZIP 파일 형식만 업로드 가능합니다.");
+			setConnectError(t('connect.zipOnlyAllowed'));
 			return;
 		}
 		if (file.size > 50 * 1024 * 1024) {
 			// 50MB
-			setConnectError("파일 용량이 너무 큽니다 (최대 50MB).");
+			setConnectError(t('connect.fileTooLarge'));
 			return;
 		}
 
@@ -699,17 +710,17 @@ const App: React.FC = () => {
 
 	const handleGenerateFromFile = async () => {
 		if (!selectedFile) {
-			setConnectError("파일을 선택해 주세요.");
+			setConnectError(t('connect.selectFile'));
 			return;
 		}
 
 		if (!projectName.trim()) {
-			setConnectError("프로젝트 이름을 입력해 주세요.");
+			setConnectError(t('connect.enterProjectName'));
 			return;
 		}
 
 		if (!subdomain.trim()) {
-			setConnectError("서브도메인을 입력해 주세요.");
+			setConnectError(t('connect.enterSubdomain'));
 			return;
 		}
 
@@ -725,7 +736,7 @@ const App: React.FC = () => {
 			setGeneratedUrl(`https://${project.full_domain}`);
 			selectProject(project);
 		} catch (error) {
-			setConnectError(error instanceof Error ? error.message : "프로젝트 생성에 실패했습니다.");
+			setConnectError(error instanceof Error ? error.message : t('connect.projectCreateFailed'));
 		} finally {
 			setIsGenerating(false);
 		}
@@ -765,9 +776,9 @@ const App: React.FC = () => {
 		setIsRecrawling(true);
 		try {
 			await projectApi.recrawlProject(currentProject.id);
-			showToast("다시 가져오기가 완료되었습니다!", "success");
+			showToast(t('status.refetchComplete'), "success");
 		} catch (error) {
-			const message = error instanceof Error ? error.message : "다시 가져오기에 실패했습니다.";
+			const message = error instanceof Error ? error.message : t('status.refetchFailed');
 			showToast(message, "error");
 		} finally {
 			setIsRecrawling(false);
@@ -780,11 +791,11 @@ const App: React.FC = () => {
 		setIsRedeploying(true);
 		try {
 			await projectApi.redeployProject(currentProject.id, redeployFile);
-			showToast("재배포가 완료되었습니다!", "success");
+			showToast(t('status.redeployComplete'), "success");
 			setShowRedeployModal(false);
 			setRedeployFile(null);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : "재배포에 실패했습니다.";
+			const message = error instanceof Error ? error.message : t('status.redeployFailed');
 			showToast(message, "error");
 		} finally {
 			setIsRedeploying(false);
@@ -804,11 +815,11 @@ const App: React.FC = () => {
 				</div>
 
 				<h2 className="text-4xl font-black text-slate-900 tracking-tighter mb-4 leading-tight">
-					통계를 추적할 사이트를
+					{t('connect.howToConnect')}
 					<br />
-					어떤 방식으로 연결할까요?
+					{t('connect.howToConnectSub')}
 				</h2>
-				<p className="text-slate-500 font-bold mb-6 text-lg">가장 빠르고 정확한 데이터 수집을 시작해 보세요.</p>
+				<p className="text-slate-500 font-bold mb-6 text-lg">{t('connect.startCollecting')}</p>
 
 				{/* 기존 프로젝트가 있으면 대시보드 바로가기 표시 */}
 				{isAuthenticated && projects.length > 0 && (
@@ -823,13 +834,13 @@ const App: React.FC = () => {
 						}}
 						className="inline-flex items-center gap-2 px-6 py-3 mb-8 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-sm font-bold transition-all shadow-lg shadow-indigo-100">
 						<LayoutGrid size={16} />
-						기존 프로젝트 대시보드 보기
+						{t('connect.viewExistingDashboard')}
 						<ArrowRight size={14} />
 					</button>
 				)}
 				{/* 로그인은 되어있지만 프로젝트가 없는 경우 - 로딩 중이거나 프로젝트 없음 */}
 				{isAuthenticated && projects.length === 0 && !isProjectsLoading && (
-					<p className="text-sm text-slate-400 mb-6">아래에서 새 프로젝트를 추가하세요.</p>
+					<p className="text-sm text-slate-400 mb-6">{t('connect.addNewProjectBelow')}</p>
 				)}
 				{/* 로그인 안내 - 로그인하지 않은 경우 */}
 				{!isAuthenticated && !isAuthLoading && (
@@ -837,7 +848,7 @@ const App: React.FC = () => {
 						onClick={() => setCurrentView(ViewID.LOGIN)}
 						className="inline-flex items-center gap-2 px-6 py-3 mb-8 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-2xl text-sm font-bold transition-all border border-indigo-200">
 						<Lock size={16} />
-						로그인하고 대시보드 이용하기
+						{t('connect.loginToDashboard')}
 						<ArrowRight size={14} />
 					</button>
 				)}
@@ -851,8 +862,8 @@ const App: React.FC = () => {
 						}}
 						className={`flex-1 flex items-center justify-center gap-2.5 py-4 rounded-[1.8rem] text-sm font-black transition-all relative ${connectMode === "file" ? "bg-white text-indigo-600 border border-slate-200" : "text-slate-500 hover:text-slate-700"}`}>
 						<FileArchive size={18} />
-						파일 업로드
-						<span className="absolute -top-3 -right-3 px-3 py-1 bg-emerald-500 text-white text-[10px] font-black rounded-full border-2 border-white animate-reveal">권장</span>
+						{t('connect.fileUpload')}
+						<span className="absolute -top-3 -right-3 px-3 py-1 bg-emerald-500 text-white text-[10px] font-black rounded-full border-2 border-white animate-reveal">{t('connect.recommended')}</span>
 					</button>
 					<button
 						onClick={() => {
@@ -861,7 +872,7 @@ const App: React.FC = () => {
 						}}
 						className={`flex-1 flex items-center justify-center gap-2.5 py-4 rounded-[1.8rem] text-sm font-black transition-all ${connectMode === "url" ? "bg-white text-indigo-600 border border-slate-200" : "text-slate-500 hover:text-slate-700"}`}>
 						<LinkIcon size={18} />
-						사이트 링크
+						{t('connect.siteLink')}
 					</button>
 				</div>
 
@@ -872,9 +883,9 @@ const App: React.FC = () => {
 						connectMode === "file" ? "bg-indigo-50 text-indigo-600 border border-indigo-100" : "bg-amber-50 text-amber-600 border border-amber-100"
 					}`}>
 					{connectMode === "file" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-					<span>{connectMode === "file" ? "로그인, 결제 등 모든 기능이 그대로 작동합니다." : "일부 기능이 작동하지 않을 수 있습니다."}</span>
+					<span>{connectMode === "file" ? t('connect.fileMode') : t('connect.urlMode')}</span>
 					<button onClick={() => setShowCompareModal(true)} className="underline underline-offset-2 hover:no-underline ml-1">
-						자세히 보기
+						{t('connect.learnMore')}
 					</button>
 				</div>
 
@@ -882,7 +893,7 @@ const App: React.FC = () => {
 					{generatedUrl ? (
 						<div className="p-10 bg-indigo-50/50 border border-indigo-100 rounded-[3rem] space-y-6 animate-scale-in">
 							<div className="flex items-center justify-center gap-2 text-indigo-600 font-black text-xs uppercase tracking-widest mb-1">
-								<Sparkles size={18} className="animate-pulse" /> 분석용 사이트 생성 완료
+								<Sparkles size={18} className="animate-pulse" /> {t('connect.siteGenerated')}
 							</div>
 							<div className="relative flex items-center gap-3 bg-white p-5 rounded-2xl border border-indigo-100 shadow-sm group">
 								<div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl">
@@ -890,16 +901,16 @@ const App: React.FC = () => {
 								</div>
 								<span className="flex-1 text-left truncate text-slate-700 font-black text-sm">{generatedUrl}</span>
 								<div className="flex items-center gap-2">
-									{copySuccess && <span className="text-[10px] font-black text-emerald-500 animate-reveal whitespace-nowrap">복사됨!</span>}
+									{copySuccess && <span className="text-[10px] font-black text-emerald-500 animate-reveal whitespace-nowrap">{t('connect.copied')}</span>}
 									<button onClick={() => handleCopyUrl(generatedUrl)} className={`p-3 rounded-xl transition-all ${copySuccess ? "bg-emerald-50 text-emerald-600 scale-110" : "bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-white"}`}>
 										{copySuccess ? <Check size={18} /> : <Copy size={18} />}
 									</button>
 								</div>
 							</div>
 							<p className="text-[12px] font-bold text-slate-400 leading-relaxed px-4">
-								축하합니다! 이제 위 링크를 통해 접속하는 모든 데이터가
+								{t('connect.congratulations')}
 								<br />
-								ARTIFY Intelligence로 실시간 수집됩니다.
+								{t('connect.dataCollected')}
 							</p>
 							<div className="grid grid-cols-2 gap-4">
 								<button onClick={() => {
@@ -909,10 +920,10 @@ const App: React.FC = () => {
 										setCurrentView(ViewID.LOGIN);
 									}
 								}} className="w-full bg-indigo-600 text-white py-4.5 rounded-2xl font-black text-md hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 active:scale-95">
-									대시보드 보기
+									{t('connect.viewDashboard')}
 								</button>
 								<button onClick={handleResetConnect} className="w-full bg-white border border-slate-200 text-slate-600 py-4.5 rounded-2xl font-black text-md hover:bg-slate-50 transition-all active:scale-95">
-									다른 사이트 추가
+									{t('connect.addAnotherSite')}
 								</button>
 							</div>
 						</div>
@@ -927,31 +938,31 @@ const App: React.FC = () => {
 										<input type="text" value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://your-site.com" className="w-full pl-16 pr-6 py-5 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
 									</div>
 									<div className="grid grid-cols-2 gap-4">
-										<input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="프로젝트 이름" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
-										<input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="서브도메인 (선택)" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
+										<input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder={t('connect.projectName')} className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
+										<input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder={t('connect.subdomain')} className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-[1.5rem] text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all shadow-inner" />
 									</div>
 									{/* 호스팅 모드 UI 숨김 - 동적 크롤링으로 대체됨 (백엔드 코드는 유지) */}
 									<button onClick={handleGenerateFromUrl} disabled={isGenerating || !isAuthenticated} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl tracking-tight hover:bg-slate-800 transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 shadow-2xl shadow-slate-900/10">
 										{isGenerating ? (
 											<>
 												<Loader2 size={24} className="animate-spin" />
-												분석 정보 동기화 중...
+												{t('connect.syncingData')}
 											</>
 										) : !isAuthenticated ? (
 											<>
 												<Lock size={22} />
-												로그인 후 이용 가능
+												{t('connect.loginRequired')}
 											</>
 										) : (
 											<>
-												통계 버전 생성 시작 <ArrowRight size={22} />
+												{t('connect.startGeneration')} <ArrowRight size={22} />
 											</>
 										)}
 									</button>
 									{!isAuthenticated && (
 										<button onClick={handleGoogleLogin} className="w-full border-2 border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
 											<img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
-											Google 계정으로 로그인
+											{t('connect.googleLogin')}
 										</button>
 									)}
 								</div>
@@ -975,13 +986,13 @@ const App: React.FC = () => {
 												<UploadCloud size={40} />
 											</div>
 											<div>
-												<p className="text-lg font-black text-slate-900 mb-1">ZIP 파일을 여기에 끌어다 놓으세요</p>
-												<p className="text-sm font-bold text-slate-400">또는 클릭하여 내 컴퓨터에서 선택 (최대 50MB)</p>
+												<p className="text-lg font-black text-slate-900 mb-1">{t('connect.dragDropZip')}</p>
+												<p className="text-sm font-bold text-slate-400">{t('connect.clickToSelect')}</p>
 											</div>
 											<div className="flex flex-wrap justify-center gap-2.5 mt-2">
-												<span className="px-3 py-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-black text-slate-400">정적 파일 권장</span>
-												<span className="px-3 py-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-black text-slate-400">index.html 필수</span>
-												<span className="px-3 py-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-black text-slate-400">깨짐 확률 0%</span>
+												<span className="px-3 py-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-black text-slate-400">{t('connect.staticRecommended')}</span>
+												<span className="px-3 py-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-black text-slate-400">{t('connect.indexRequired')}</span>
+												<span className="px-3 py-1.5 bg-white border border-slate-100 rounded-lg text-[10px] font-black text-slate-400">{t('connect.noBreakage')}</span>
 											</div>
 										</div>
 									) : (
@@ -1004,7 +1015,7 @@ const App: React.FC = () => {
 											{uploadStatus === "uploading" ? (
 												<div className="space-y-4">
 													<div className="flex justify-between items-end text-[11px] font-black text-indigo-600 uppercase tracking-widest">
-														<span>파일 분석 및 업로드 중...</span>
+														<span>{t('connect.uploadingFile')}</span>
 														<span>{uploadProgress}%</span>
 													</div>
 													<div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden">
@@ -1018,36 +1029,36 @@ const App: React.FC = () => {
 															<FileCode size={20} />
 														</div>
 														<div>
-															<p className="text-[13px] font-bold text-slate-900">index.html 파일을 감지했습니다</p>
-															<p className="text-[11px] font-bold text-slate-400 mt-0.5">정적 사이트 구조가 유효하며 최적화 준비가 되었습니다.</p>
+															<p className="text-[13px] font-bold text-slate-900">{t('connect.indexDetected')}</p>
+															<p className="text-[11px] font-bold text-slate-400 mt-0.5">{t('connect.indexValid')}</p>
 														</div>
 													</div>
 													<div className="grid grid-cols-2 gap-4">
-														<input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="프로젝트 이름 *" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
-														<input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="서브도메인 *" className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
+														<input type="text" value={projectName} onChange={e => setProjectName(e.target.value)} placeholder={t('connect.projectNameRequired')} className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
+														<input type="text" value={subdomain} onChange={e => setSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder={t('connect.subdomainRequired')} className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-xl text-slate-900 font-bold placeholder:text-slate-300 focus:bg-white focus:border-indigo-600 focus:outline-none transition-all" />
 													</div>
-													<p className="text-[11px] font-bold text-slate-400 text-left">* 생성될 주소: <span className="text-indigo-600">{subdomain || 'your-site'}.artify.page</span></p>
+													<p className="text-[11px] font-bold text-slate-400 text-left">{t('connect.generatedUrl')} <span className="text-indigo-600">{subdomain || 'your-site'}.artify.page</span></p>
 													<button onClick={handleGenerateFromFile} disabled={isGenerating || !isAuthenticated} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl tracking-tight hover:bg-slate-800 transition-all flex items-center justify-center gap-3 active:scale-[0.98] disabled:opacity-70 shadow-2xl shadow-slate-900/10">
 														{isGenerating ? (
 															<>
 																<Loader2 size={24} className="animate-spin" />
-																통계 인프라 구축 중...
+																{t('connect.buildingInfra')}
 															</>
 														) : !isAuthenticated ? (
 															<>
 																<Lock size={22} />
-																로그인 후 이용 가능
+																{t('connect.loginRequired')}
 															</>
 														) : (
 															<>
-																지금 바로 생성하기 <ArrowRight size={22} />
+																{t('connect.createNow')} <ArrowRight size={22} />
 															</>
 														)}
 													</button>
 													{!isAuthenticated && (
 														<button onClick={handleGoogleLogin} className="w-full border-2 border-slate-200 bg-white py-4 rounded-2xl font-black text-sm hover:bg-slate-50 transition-all flex items-center justify-center gap-3 active:scale-95">
 															<img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
-															Google 계정으로 로그인
+															{t('connect.googleLogin')}
 														</button>
 													)}
 												</div>
@@ -1069,15 +1080,15 @@ const App: React.FC = () => {
 				<div className="mt-16 pt-10 border-t border-slate-50 flex flex-wrap items-center justify-center gap-x-12 gap-y-6 opacity-60">
 					<div className="flex items-center gap-2.5 text-[11px] font-black text-slate-400">
 						<ShieldCheck size={16} className="text-emerald-500" />
-						자동 IP 마스킹 (익명성 보장)
+						{t('connect.autoIpMasking')}
 					</div>
 					<div className="flex items-center gap-2.5 text-[11px] font-black text-slate-400">
 						<Lock size={16} className="text-indigo-500" />
-						AES-256 파일 암호화 전송
+						{t('connect.aesEncryption')}
 					</div>
 					<div className="flex items-center gap-2.5 text-[11px] font-black text-slate-400">
 						<Check size={16} className="text-indigo-600" />
-						99.9% 렌더링 무결성 보장
+						{t('connect.renderingIntegrity')}
 					</div>
 				</div>
 			</div>
@@ -1089,7 +1100,7 @@ const App: React.FC = () => {
 				<div className="bg-white w-full max-w-lg rounded-[2rem] shadow-2xl animate-scale-in overflow-hidden" onClick={e => e.stopPropagation()}>
 					{/* Modal Header */}
 					<div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center">
-						<h3 className="font-black text-slate-900 text-lg tracking-tight">어떤 방식이 나에게 맞을까요?</h3>
+						<h3 className="font-black text-slate-900 text-lg tracking-tight">{t('connect.whichMethod')}</h3>
 						<button onClick={() => setShowCompareModal(false)} className="p-2 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
 							<X size={20} />
 						</button>
@@ -1100,28 +1111,28 @@ const App: React.FC = () => {
 						{/* Comparison Table */}
 						<div className="space-y-3">
 							{[
-								{ label: "로그인 / 회원가입", file: true, url: false },
-								{ label: "결제 / 장바구니", file: true, url: false },
-								{ label: "폼 제출 / 검색", file: true, url: "partial" },
-								{ label: "페이지 이동", file: true, url: true },
-								{ label: "화면 표시", file: "원본 그대로", url: "일부 깨질 수 있음" },
+								{ label: t('features.loginAuth'), file: true, url: false },
+								{ label: t('features.payment'), file: true, url: false },
+								{ label: t('features.formSearch'), file: true, url: "partial" },
+								{ label: t('features.navigation'), file: true, url: true },
+								{ label: t('features.display'), file: t('features.original'), url: t('features.mayBreak') },
 							].map((item, idx) => (
 								<div key={idx} className="grid grid-cols-3 gap-4 py-3 border-b border-slate-50 last:border-0">
 									<span className="text-sm font-bold text-slate-600">{item.label}</span>
 									<div className="flex items-center justify-center gap-1.5">
 										{item.file === true ? (
-											<><CheckCircle2 size={16} className="text-emerald-500" /><span className="text-xs font-bold text-emerald-600">정상 작동</span></>
+											<><CheckCircle2 size={16} className="text-emerald-500" /><span className="text-xs font-bold text-emerald-600">{t('connect.normalOperation')}</span></>
 										) : (
 											<span className="text-xs font-bold text-slate-500">{item.file}</span>
 										)}
 									</div>
 									<div className="flex items-center justify-center gap-1.5">
 										{item.url === true ? (
-											<><CheckCircle2 size={16} className="text-emerald-500" /><span className="text-xs font-bold text-emerald-600">정상 작동</span></>
+											<><CheckCircle2 size={16} className="text-emerald-500" /><span className="text-xs font-bold text-emerald-600">{t('connect.normalOperation')}</span></>
 										) : item.url === false ? (
-											<><X size={16} className="text-rose-400" /><span className="text-xs font-bold text-rose-500">작동 안 함</span></>
+											<><X size={16} className="text-rose-400" /><span className="text-xs font-bold text-rose-500">{t('connect.notWorking')}</span></>
 										) : item.url === "partial" ? (
-											<><AlertTriangle size={14} className="text-amber-500" /><span className="text-xs font-bold text-amber-600">제한적</span></>
+											<><AlertTriangle size={14} className="text-amber-500" /><span className="text-xs font-bold text-amber-600">{t('connect.limited')}</span></>
 										) : (
 											<span className="text-xs font-bold text-slate-500">{item.url}</span>
 										)}
@@ -1134,13 +1145,13 @@ const App: React.FC = () => {
 						<div className="grid grid-cols-2 gap-4 pt-4">
 							<div className="p-4 bg-indigo-50 rounded-xl text-center">
 								<FileArchive size={20} className="text-indigo-600 mx-auto mb-2" />
-								<p className="text-xs font-black text-indigo-600 mb-1">파일 업로드</p>
-								<p className="text-[11px] font-bold text-indigo-400">실제 운영할 사이트</p>
+								<p className="text-xs font-black text-indigo-600 mb-1">{t('connect.fileUpload')}</p>
+								<p className="text-[11px] font-bold text-indigo-400">{t('connect.forRealSite')}</p>
 							</div>
 							<div className="p-4 bg-amber-50 rounded-xl text-center">
 								<LinkIcon size={20} className="text-amber-600 mx-auto mb-2" />
-								<p className="text-xs font-black text-amber-600 mb-1">URL 입력</p>
-								<p className="text-[11px] font-bold text-amber-400">빠른 미리보기/테스트</p>
+								<p className="text-xs font-black text-amber-600 mb-1">{t('connect.siteLink')}</p>
+								<p className="text-[11px] font-bold text-amber-400">{t('connect.forQuickPreview')}</p>
 							</div>
 						</div>
 					</div>
@@ -1148,7 +1159,7 @@ const App: React.FC = () => {
 					{/* Modal Footer */}
 					<div className="px-8 py-5 border-t border-slate-100 bg-slate-50/50">
 						<button onClick={() => setShowCompareModal(false)} className="w-full bg-slate-900 text-white py-3.5 rounded-xl font-black text-sm hover:bg-slate-800 transition-colors">
-							확인
+							{t('connect.confirm')}
 						</button>
 					</div>
 				</div>
@@ -1168,8 +1179,8 @@ const App: React.FC = () => {
 							<div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-xl shadow-indigo-600/20">
 								<Sigma size={32} className="text-white" />
 							</div>
-							<h2 className="text-2xl font-black text-slate-900 tracking-tight">ARTIFY에 오신 것을 환영합니다</h2>
-							<p className="text-sm font-medium text-slate-500">Google 계정으로 간편하게 시작하세요</p>
+							<h2 className="text-2xl font-black text-slate-900 tracking-tight">{t('auth.welcomeToArtify')}</h2>
+							<p className="text-sm font-medium text-slate-500">{t('auth.googleStartSimple')}</p>
 						</div>
 
 						{/* Google Login Button */}
@@ -1184,14 +1195,14 @@ const App: React.FC = () => {
 								<path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
 								<path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
 							</svg>
-							Google 계정으로 계속하기
+							{t('connect.googleContinue')}
 						</button>
 
 						{/* Terms */}
 						<p className="text-[11px] text-center text-slate-400 leading-relaxed">
-							계속 진행하면 ARTIFY의{" "}
-							<span className="text-slate-600 underline underline-offset-2 cursor-pointer hover:text-indigo-600">이용약관</span> 및{" "}
-							<span className="text-slate-600 underline underline-offset-2 cursor-pointer hover:text-indigo-600">개인정보처리방침</span>에 동의하는 것으로 간주됩니다.
+							{t('auth.termsAgreement')}{" "}
+							<span className="text-slate-600 underline underline-offset-2 cursor-pointer hover:text-indigo-600">{t('auth.termsOfService')}</span> {t('auth.and')}{" "}
+							<span className="text-slate-600 underline underline-offset-2 cursor-pointer hover:text-indigo-600">{t('auth.privacyPolicy')}</span>{t('auth.agreementEnd')}
 						</p>
 					</div>
 				</div>
@@ -1211,15 +1222,15 @@ const App: React.FC = () => {
 							<h1 className="text-xl font-black tracking-tighter">ARTIFY Intelligence</h1>
 						</div>
 						<h3 className="text-4xl font-black tracking-tighter leading-tight mb-8">
-							데이터 이면의
+							{t('auth.findRealValue')}
 							<br />
-							진짜 가치를 찾아내세요.
+							{t('auth.findRealValueSub')}
 						</h3>
 						<div className="space-y-6">
 							{[
-								{ i: <LayoutGrid size={18} />, t: "유입경로/페이지/기기환경 한눈에" },
-								{ i: <Clock size={18} />, t: "시간대별 트래픽 흐름 분석" },
-								{ i: <Zap size={18} />, t: "웹 성능(Core Web Vitals) 추적" },
+								{ i: <LayoutGrid size={18} />, t: t('overview.trafficFlow') },
+								{ i: <Clock size={18} />, t: t('overview.timeTraffic') },
+								{ i: <Zap size={18} />, t: t('overview.webVitals') },
 							].map((b, i) => (
 								<div key={i} className="flex items-center gap-4 group cursor-default">
 									<div className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition-all">{b.i}</div>
@@ -1246,7 +1257,7 @@ const App: React.FC = () => {
 							<div className="w-2 h-2 rounded-full bg-indigo-600 animate-ping"></div>ARTIFY Statistical Analysis Engine
 							{realtimeData && (
 								<span className="ml-4 text-emerald-500 flex items-center gap-1.5">
-									<Activity size={12} /> {realtimeData.active_users} 실시간 사용자
+									<Activity size={12} /> {realtimeData.active_users} {t('dashboard.realtimeUsers')}
 								</span>
 							)}
 						</div>
@@ -1260,7 +1271,7 @@ const App: React.FC = () => {
 										className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-bold text-slate-600 transition-colors"
 									>
 										<Globe size={16} />
-										{currentProject?.name || '프로젝트 선택'}
+										{currentProject?.name || t('dashboard.selectProject')}
 										{/* 현재 프로젝트 상태 배지 */}
 										{currentProject && currentProject.status && currentProject.status !== 'READY' && (
 											<span className={`ml-1 px-2 py-0.5 text-[10px] font-bold rounded-full ${
@@ -1270,9 +1281,9 @@ const App: React.FC = () => {
 													? 'bg-red-100 text-red-700'
 													: 'bg-slate-100 text-slate-500'
 											}`}>
-												{currentProject.status === 'PENDING' ? '대기중' :
-												 currentProject.status === 'PROCESSING' ? '준비중' :
-												 currentProject.status === 'ERROR' ? '오류' : currentProject.status}
+												{currentProject.status === 'PENDING' ? t('status.pending') :
+												 currentProject.status === 'PROCESSING' ? t('status.processing') :
+												 currentProject.status === 'ERROR' ? t('status.error') : currentProject.status}
 											</span>
 										)}
 										<ChevronDown size={16} className={`transition-transform ${showProjectSelector ? 'rotate-180' : ''}`} />
@@ -1283,19 +1294,19 @@ const App: React.FC = () => {
 											onClick={() => {
 												const url = `https://${currentProject.subdomain}.artify.page`;
 												navigator.clipboard.writeText(url);
-												showToast(`URL이 복사되었습니다: ${url}`, 'success');
+												showToast(t('dashboard.urlCopied'), 'success');
 											}}
 											className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 rounded-xl text-xs font-bold text-indigo-600 transition-colors"
 											title={`https://${currentProject.subdomain}.artify.page`}
 										>
 											<Copy size={14} />
-											URL 복사
+											{t('dashboard.copyUrl')}
 										</button>
 									)}
 									{showProjectSelector && (
 										<div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-2xl border border-slate-200 shadow-2xl z-50 overflow-hidden">
 											<div className="p-2 border-b border-slate-100">
-												<p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">프로젝트 목록</p>
+												<p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">{t('dashboard.projectList')}</p>
 											</div>
 											<div className="max-h-60 overflow-auto">
 												{projects.map(project => (
@@ -1314,11 +1325,11 @@ const App: React.FC = () => {
 														>
 															{/* 상태 인디케이터 */}
 															{project.status === 'READY' ? (
-																<span className="w-2 h-2 rounded-full bg-green-500" title="준비 완료" />
+																<span className="w-2 h-2 rounded-full bg-green-500" title={t('status.ready')} />
 															) : project.status === 'PROCESSING' || project.status === 'PENDING' ? (
-																<span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title={project.status_message || '준비 중'} />
+																<span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" title={project.status_message || t('status.preparing')} />
 															) : project.status === 'ERROR' ? (
-																<span className="w-2 h-2 rounded-full bg-red-500" title={project.status_message || '오류'} />
+																<span className="w-2 h-2 rounded-full bg-red-500" title={project.status_message || t('status.error')} />
 															) : (
 																<span className="w-2 h-2 rounded-full bg-slate-300" />
 															)}
@@ -1327,7 +1338,7 @@ const App: React.FC = () => {
 																<p className="text-[10px] text-slate-400">
 																	{project.status === 'READY' || !project.status
 																		? project.full_domain
-																		: project.status_message || '준비 중...'}
+																		: project.status_message || t('status.preparing')}
 																</p>
 															</div>
 														</button>
@@ -1338,20 +1349,20 @@ const App: React.FC = () => {
 															<button
 																onClick={async (e) => {
 																	e.stopPropagation();
-																	if (confirm(`"${project.name}" 프로젝트를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) {
+																	if (confirm(t('dashboard.deleteProjectConfirm', { name: project.name }))) {
 																		try {
 																			await deleteProject(project.id);
-																			showToast('프로젝트가 삭제되었습니다.', 'success');
+																			showToast(t('dashboard.projectDeleted'), 'success');
 																			if (currentProject?.id === project.id) {
 																				selectProject(null);
 																			}
 																		} catch (error) {
-																			showToast('프로젝트 삭제에 실패했습니다.', 'error');
+																			showToast(t('dashboard.projectDeleteFailed'), 'error');
 																		}
 																	}
 																}}
 																className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-																title="프로젝트 삭제"
+																title={t('status.deleteProject')}
 															>
 																<Trash2 size={14} />
 															</button>
@@ -1367,7 +1378,7 @@ const App: React.FC = () => {
 													}}
 													className="w-full px-4 py-2 text-sm font-bold text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors flex items-center gap-2"
 												>
-													<Sigma size={14} /> 새 프로젝트 추가
+													<Sigma size={14} /> {t('dashboard.addNewProject')}
 												</button>
 											</div>
 										</div>
@@ -1380,10 +1391,10 @@ const App: React.FC = () => {
 						<div className="flex items-center bg-white border border-slate-200 rounded-[1.5rem] shadow-sm p-1.5 gap-2">
 							<div className="flex items-center gap-1.5 px-1">
 								{[
-									{ id: TimeRange.DAY, label: "일" },
-									{ id: TimeRange.WEEK, label: "주" },
-									{ id: TimeRange.MONTH, label: "월" },
-									{ id: TimeRange.YEAR, label: "년" },
+									{ id: TimeRange.DAY, label: t('timeRange.day') },
+									{ id: TimeRange.WEEK, label: t('timeRange.week') },
+									{ id: TimeRange.MONTH, label: t('timeRange.month') },
+									{ id: TimeRange.YEAR, label: t('timeRange.year') },
 								].map(range => (
 									<button key={range.id} onClick={() => setTimeRange(range.id)} className={`px-4 py-2 text-[11px] font-black uppercase tracking-wider rounded-xl transition-all h-9 flex items-center justify-center min-w-[48px] ${timeRange === range.id ? "bg-slate-900 text-white shadow-md" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"}`}>
 										{range.label}
@@ -1415,14 +1426,14 @@ const App: React.FC = () => {
 								disabled={isRecrawling}
 								className="bg-slate-900 text-white px-7 py-3 rounded-[1.5rem] flex items-center gap-2.5 text-sm font-black shadow-2xl hover:bg-slate-800 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
 							>
-								{isRecrawling ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />} 다시 가져오기
+								{isRecrawling ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />} {t('dashboard.refetch')}
 							</button>
 						) : currentProject?.source_type === "ZIP" ? (
 							<button
 								onClick={() => setShowRedeployModal(true)}
 								className="bg-slate-900 text-white px-7 py-3 rounded-[1.5rem] flex items-center gap-2.5 text-sm font-black shadow-2xl hover:bg-slate-800 transition-all active:scale-95"
 							>
-								<Upload size={16} /> 재배포
+								<Upload size={16} /> {t('status.redeploy')}
 							</button>
 						) : null}
 					</div>
@@ -1438,8 +1449,8 @@ const App: React.FC = () => {
 									<Sigma size={28} />
 								</div>
 								<div className="flex-1">
-									<h4 className="text-xl font-black tracking-tighter mb-2.5">ARTIFY 정보 브리핑</h4>
-									<p className="text-slate-300 text-[15px] leading-relaxed font-medium">{insights?.summary || "데이터 수집 및 통계 분석 중..."}</p>
+									<h4 className="text-xl font-black tracking-tighter mb-2.5">{t('dashboard.briefing')}</h4>
+									<p className="text-slate-300 text-[15px] leading-relaxed font-medium">{insights?.summary || t('status.analyzing')}</p>
 								</div>
 							</div>
 							{insights && (
@@ -1464,7 +1475,7 @@ const App: React.FC = () => {
 										<p className="text-[11px] font-bold text-slate-200 leading-snug">{signal.description}</p>
 									</div>
 								))}
-								{(!insights || insights.signals.length === 0) && <p className="text-[11px] font-bold text-slate-500">계산을 위한 충분한 샘플을 수집 중입니다.</p>}
+								{(!insights || insights.signals.length === 0) && <p className="text-[11px] font-bold text-slate-500">{t('dashboard.collectingSamples')}</p>}
 							</div>
 						</div>
 					</div>
@@ -1477,9 +1488,9 @@ const App: React.FC = () => {
 						<div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center mb-6">
 							<Globe size={40} className="text-slate-300" />
 						</div>
-						<h3 className="text-2xl font-black text-slate-900 mb-3">프로젝트를 선택하세요</h3>
+						<h3 className="text-2xl font-black text-slate-900 mb-3">{t('dashboard.selectProjectTitle')}</h3>
 						<p className="text-slate-500 mb-8 max-w-md">
-							분석할 프로젝트를 선택하거나 새 프로젝트를 추가하여 웹사이트 분석을 시작하세요.
+							{t('dashboard.selectProjectDesc')}
 						</p>
 						<div className="flex gap-4">
 							{projects.length > 0 && (
@@ -1487,14 +1498,14 @@ const App: React.FC = () => {
 									onClick={() => selectProject(projects[0])}
 									className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-colors"
 								>
-									첫 번째 프로젝트 선택
+									{t('dashboard.selectFirstProject')}
 								</button>
 							)}
 							<button
 								onClick={() => setCurrentView(ViewID.CONNECT)}
 								className="px-6 py-3 bg-slate-100 text-slate-600 rounded-2xl font-black hover:bg-slate-200 transition-colors flex items-center gap-2"
 							>
-								<Sigma size={18} /> 새 프로젝트 추가
+								<Sigma size={18} /> {t('dashboard.addNewProject')}
 							</button>
 						</div>
 					</div>
@@ -1519,25 +1530,25 @@ const App: React.FC = () => {
 						{isAnalyticsLoading && (
 							<div className="flex items-center justify-center py-4">
 								<Loader2 size={24} className="animate-spin text-indigo-600" />
-								<span className="ml-2 text-sm font-bold text-slate-500">데이터 로딩 중...</span>
+								<span className="ml-2 text-sm font-bold text-slate-500">{t('dashboard.loadingData')}</span>
 							</div>
 						)}
 						<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-							<MetricCard title="총 방문자 수" value={displayMetrics.totalVisitors.toLocaleString()} change={displayMetrics.comparison?.changes.total_visitors ?? 0} description="선택한 기간 동안 사이트를 방문한 총 순 방문자 수입니다." icon={<Users size={18} />} />
-							<MetricCard title={getAverageVisitorLabel()} value={formatDailyAverage(displayMetrics.dailyAverage)} change={displayMetrics.comparison?.changes.sessions ?? 0} description="선택한 기간 내 평균 방문자 수입니다." icon={<Activity size={18} />} />
-							<MetricCard title="평균 체류시간" value={formatSessionTime(displayMetrics.avgSessionTime)} change={displayMetrics.comparison?.changes.avg_session_time ?? 0} description="사용자가 사이트에 머무르는 평균 시간으로 몰입도를 나타냅니다." icon={<Clock size={18} />} />
-							<MetricCard title="이탈률" value={displayMetrics.bounceRate.toFixed(1)} suffix="%" change={displayMetrics.comparison?.changes.bounce_rate ?? 0} description="첫 페이지만 보고 이탈한 방문자의 비율입니다." icon={<TrendingDown size={18} />} />
+							<MetricCard title={t('metrics.totalVisitors')} value={displayMetrics.totalVisitors.toLocaleString()} change={displayMetrics.comparison?.changes.total_visitors ?? 0} description={t('metrics.totalVisitorsDesc')} icon={<Users size={18} />} />
+							<MetricCard title={getAverageVisitorLabel()} value={formatDailyAverage(displayMetrics.dailyAverage)} change={displayMetrics.comparison?.changes.sessions ?? 0} description={t('metrics.avgVisitorsDesc')} icon={<Activity size={18} />} />
+							<MetricCard title={t('metrics.avgSessionTime')} value={formatSessionTime(displayMetrics.avgSessionTime)} change={displayMetrics.comparison?.changes.avg_session_time ?? 0} description={t('metrics.avgSessionTimeDesc')} icon={<Clock size={18} />} />
+							<MetricCard title={t('metrics.bounceRate')} value={displayMetrics.bounceRate.toFixed(1)} suffix="%" change={displayMetrics.comparison?.changes.bounce_rate ?? 0} description={t('metrics.bounceRateDesc')} icon={<TrendingDown size={18} />} />
 						</div>
 						<div className="grid grid-cols-1 lg:grid-cols-3 gap-7">
 							<div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group">
 								<div className="flex justify-between items-center mb-8">
 									<div>
-										<h3 className="text-xl font-black text-slate-900 tracking-tight">방문자 추이</h3>
+										<h3 className="text-xl font-black text-slate-900 tracking-tight">{t('metrics.visitorTrend')}</h3>
 										<p className="text-[11px] font-bold text-slate-400 mt-1 uppercase tracking-wider">{timeRange.toUpperCase()} Visitor Trend</p>
 									</div>
 									<div className="flex items-center gap-4 text-[10px] font-bold text-slate-400">
 										<div className="flex items-center gap-1.5">
-											<div className="w-2 h-2 rounded-full bg-indigo-500 shadow-sm shadow-indigo-200"></div> 방문자 추이
+											<div className="w-2 h-2 rounded-full bg-indigo-500 shadow-sm shadow-indigo-200"></div> {t('metrics.visitors')}
 										</div>
 									</div>
 								</div>
@@ -1560,7 +1571,7 @@ const App: React.FC = () => {
 								</div>
 							</div>
 							<div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col group relative">
-								<h3 className="text-xl font-black text-slate-900 tracking-tight mb-8">신규 vs 재방문 비율</h3>
+								<h3 className="text-xl font-black text-slate-900 tracking-tight mb-8">{t('metrics.newVsReturning')}</h3>
 								<div className="flex-1 flex flex-col items-center justify-center">
 									<div className="h-56 w-full relative">
 										<div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-10">
@@ -1571,8 +1582,8 @@ const App: React.FC = () => {
 											<PieChart>
 												<Pie
 													data={[
-														{ name: "신규 방문", value: displayMetrics.newVsReturning?.new_ratio ?? 0, color: "#6366f1" },
-														{ name: "재방문", value: displayMetrics.newVsReturning?.returning_ratio ?? 0, color: "#f1f5f9" },
+														{ name: t('metrics.newVisit'), value: displayMetrics.newVsReturning?.new_ratio ?? 0, color: "#6366f1" },
+														{ name: t('metrics.returning'), value: displayMetrics.newVsReturning?.returning_ratio ?? 0, color: "#f1f5f9" },
 													]}
 													cx="50%"
 													cy="50%"
@@ -1584,8 +1595,8 @@ const App: React.FC = () => {
 													animationBegin={200}
 													animationDuration={1500}>
 													{[
-														{ name: "신규", value: displayMetrics.newVsReturning?.new_ratio ?? 0, color: "#6366f1" },
-														{ name: "재방문", value: displayMetrics.newVsReturning?.returning_ratio ?? 0, color: "#f1f5f9" },
+														{ name: t('metrics.new'), value: displayMetrics.newVsReturning?.new_ratio ?? 0, color: "#6366f1" },
+														{ name: t('metrics.returning'), value: displayMetrics.newVsReturning?.returning_ratio ?? 0, color: "#f1f5f9" },
 													].map((e, i) => (
 														<Cell key={i} fill={e.color} className="hover:opacity-80 transition-opacity" />
 													))}
@@ -1597,14 +1608,14 @@ const App: React.FC = () => {
 										<div className="flex justify-between items-center p-3 rounded-2xl bg-indigo-50/30 border border-indigo-50">
 											<div className="flex items-center gap-3">
 												<div className="w-2.5 h-2.5 rounded-full bg-indigo-500"></div>
-												<span className="text-[12px] font-bold text-slate-600">신규 방문자</span>
+												<span className="text-[12px] font-bold text-slate-600">{t('metrics.newVisitor')}</span>
 											</div>
 											<span className="text-sm font-black text-slate-900">{(displayMetrics.newVsReturning?.new_ratio ?? 0).toFixed(1)}%</span>
 										</div>
 										<div className="flex justify-between items-center p-3 rounded-2xl bg-slate-50 border border-slate-100">
 											<div className="flex items-center gap-3">
 												<div className="w-2.5 h-2.5 rounded-full bg-slate-300"></div>
-												<span className="text-[12px] font-bold text-slate-600">재방문자</span>
+												<span className="text-[12px] font-bold text-slate-600">{t('metrics.returningVisitor')}</span>
 											</div>
 											<span className="text-sm font-black text-slate-900">{(displayMetrics.newVsReturning?.returning_ratio ?? 0).toFixed(1)}%</span>
 										</div>
@@ -1618,7 +1629,7 @@ const App: React.FC = () => {
 				return (
 					<div className="grid grid-cols-1 lg:grid-cols-2 gap-7 animate-reveal">
 						<div className="bg-white p-7 rounded-[2rem] border border-slate-200 shadow-sm">
-							<h3 className="text-lg font-black mb-6">페이지별 트래픽</h3>
+							<h3 className="text-lg font-black mb-6">{t('behavior.pageTraffic')}</h3>
 							<div className="space-y-1">
 								{displayMetrics.topPages.length > 0 ? (
 									displayMetrics.topPages.map((page, idx) => (
@@ -1628,36 +1639,36 @@ const App: React.FC = () => {
 												<span className="text-sm font-bold">{page.title || page.path}</span>
 											</div>
 											<div className="text-right">
-												<p className="text-sm font-black">{page.views.toLocaleString()}명</p>
-												<p className={`text-[10px] font-bold ${selectedHeatmapPage === page.path ? "text-white/60" : "text-slate-400"}`}>평균 {formatSessionTime(page.avg_time || 0)}</p>
+												<p className="text-sm font-black">{page.views.toLocaleString()}{t('metrics.person')}</p>
+												<p className={`text-[10px] font-bold ${selectedHeatmapPage === page.path ? "text-white/60" : "text-slate-400"}`}>{t('metrics.avg')} {formatSessionTime(page.avg_time || 0)}</p>
 											</div>
 										</div>
 									))
 								) : (
 									<div className="text-center py-8 text-slate-400">
-										<p className="text-sm">페이지 데이터 없음</p>
+										<p className="text-sm">{t('behavior.noPageData')}</p>
 									</div>
 								)}
 							</div>
 						</div>
 						<div className="bg-white p-7 rounded-[2rem] border border-slate-200 shadow-sm relative overflow-visible">
 							<h3 className="text-lg font-black mb-6 flex items-center gap-2">
-								<MousePointer2 size={18} className="text-rose-500" /> 히트맵 분석:
+								<MousePointer2 size={18} className="text-rose-500" /> {t('behavior.heatmapAnalysis')}:
 								{selectedHeatmapPage ? (
 									<>
 										<span className="text-indigo-600">{selectedHeatmapPage}</span>
-										<span className="text-sm font-normal text-slate-500 ml-2">({heatmapData?.total_clicks?.toLocaleString() ?? 0} 클릭)</span>
+										<span className="text-sm font-normal text-slate-500 ml-2">({heatmapData?.total_clicks?.toLocaleString() ?? 0} {t('behavior.clicks')})</span>
 									</>
 								) : (
-									<span className="text-slate-400 font-normal text-sm">페이지를 선택해주세요</span>
+									<span className="text-slate-400 font-normal text-sm">{t('behavior.selectPage')}</span>
 								)}
 							</h3>
 							<div className="aspect-video bg-slate-50 rounded-2xl border border-slate-100 relative overflow-hidden shadow-inner">
 								{!selectedHeatmapPage ? (
 									<div className="flex flex-col items-center justify-center h-full text-slate-400">
 										<MousePointer2 size={32} className="mb-3 opacity-30" />
-										<p className="text-sm font-medium">좌측 페이지별 트래픽에서</p>
-										<p className="text-sm font-medium">분석할 페이지를 선택해주세요</p>
+										<p className="text-sm font-medium">{t('behavior.selectPageFromLeft')}</p>
+										<p className="text-sm font-medium">{t('behavior.selectPageToAnalyze')}</p>
 									</div>
 								) : heatmapData && heatmapData.heatmap_spots && heatmapData.heatmap_spots.length > 0 ? (
 									(() => {
@@ -1680,8 +1691,8 @@ const App: React.FC = () => {
 								) : (
 									<div className="flex flex-col items-center justify-center h-full text-slate-400">
 										<MousePointerClick size={32} className="mb-3 opacity-30" />
-										<p className="text-sm font-medium">클릭 데이터 없음</p>
-										<p className="text-xs mt-1">사용자 클릭이 수집되면 여기에 표시됩니다</p>
+										<p className="text-sm font-medium">{t('behavior.noClickData')}</p>
+										<p className="text-xs mt-1">{t('behavior.clickDataWillShow')}</p>
 									</div>
 								)}
 							</div>
@@ -1692,7 +1703,7 @@ const App: React.FC = () => {
 				return (
 					<div className="grid grid-cols-1 lg:grid-cols-12 gap-7 animate-reveal">
 						<div className="lg:col-span-4 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-							<h3 className="text-lg font-black mb-8">유입 채널</h3>
+							<h3 className="text-lg font-black mb-8">{t('acquisition.trafficChannel')}</h3>
 							<div className="space-y-6">
 								{displayMetrics.trafficSources && displayMetrics.trafficSources.length > 0 ? (
 									(() => {
@@ -1705,7 +1716,7 @@ const App: React.FC = () => {
 													<div className="flex justify-between items-center mb-2 text-xs font-black">
 														<span className="text-slate-600 flex items-center gap-2">
 															<div className="w-2 h-2 rounded-full" style={{ backgroundColor: colors[i % colors.length] }}></div>
-															{source.source || '직접 유입'}
+															{source.source || t('acquisition.directTraffic')}
 														</span>
 														<span className="text-slate-900">{percentage}%</span>
 													</div>
@@ -1718,13 +1729,13 @@ const App: React.FC = () => {
 									})()
 								) : (
 									<div className="text-center py-8 text-slate-400">
-										<p className="text-sm">유입 경로 데이터 없음</p>
+										<p className="text-sm">{t('acquisition.noChannelData')}</p>
 									</div>
 								)}
 							</div>
 						</div>
 						<div className="lg:col-span-8 bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
-							<h3 className="text-lg font-black mb-8">국가별 유입</h3>
+							<h3 className="text-lg font-black mb-8">{t('acquisition.countryTraffic')}</h3>
 							<div className="space-y-5">
 								{displayMetrics.geography && displayMetrics.geography.length > 0 ? (
 									(() => {
@@ -1755,7 +1766,7 @@ const App: React.FC = () => {
 									})()
 								) : (
 									<div className="text-center py-8 text-slate-400">
-										<p className="text-sm">국가별 데이터 없음</p>
+										<p className="text-sm">{t('acquisition.noCountryData')}</p>
 									</div>
 								)}
 							</div>
@@ -1768,7 +1779,7 @@ const App: React.FC = () => {
 						<div className="lg:col-span-5 bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm flex flex-col items-center justify-center relative overflow-hidden">
 							<div className="absolute -top-10 -left-10 w-40 h-40 bg-indigo-500/5 rounded-full blur-3xl"></div>
 							<h3 className="text-lg font-black mb-12 flex items-center gap-2 w-full">
-								<Smartphone size={18} className="text-indigo-500" /> 기기별 사용 비중
+								<Smartphone size={18} className="text-indigo-500" /> {t('tech.deviceUsage')}
 							</h3>
 							<div className="flex items-center gap-16">
 								<div className="text-center group cursor-default">
@@ -1790,15 +1801,15 @@ const App: React.FC = () => {
 							<div className="mt-12 w-full bg-slate-50 p-6 rounded-3xl border border-slate-100 flex items-center justify-between">
 								<div className="flex items-center gap-3">
 									<Tablet size={20} className="text-slate-300" />
-									<span className="text-xs font-bold text-slate-500">기타 기기(태블릿 등)</span>
+									<span className="text-xs font-bold text-slate-500">{t('tech.otherDevices')}</span>
 								</div>
-								<span className="text-sm font-black text-slate-900">미미함 (&lt; 1%)</span>
+								<span className="text-sm font-black text-slate-900">{t('tech.minimal')} (&lt; 1%)</span>
 							</div>
 						</div>
 						<div className="lg:col-span-7 grid grid-cols-1 md:grid-cols-2 gap-7">
 							<div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
 								<h3 className="text-base font-black mb-8 flex items-center gap-2">
-									<Globe size={18} className="text-indigo-500" /> 브라우저 점유율
+									<Globe size={18} className="text-indigo-500" /> {t('tech.browserShare')}
 								</h3>
 								<div className="space-y-6">
 									{displayMetrics.browserOs?.browsers && displayMetrics.browserOs.browsers.length > 0 ? (
@@ -1815,14 +1826,14 @@ const App: React.FC = () => {
 										))
 									) : (
 										<div className="text-center py-8 text-slate-400">
-											<p className="text-sm">브라우저 데이터 없음</p>
+											<p className="text-sm">{t('tech.noBrowserData')}</p>
 										</div>
 									)}
 								</div>
 							</div>
 							<div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm">
 								<h3 className="text-base font-black mb-8 flex items-center gap-2">
-									<Layers size={18} className="text-indigo-500" /> 운영체제 (OS)
+									<Layers size={18} className="text-indigo-500" /> {t('tech.operatingSystem')}
 								</h3>
 								<div className="space-y-5">
 									{displayMetrics.browserOs?.operating_systems && displayMetrics.browserOs.operating_systems.length > 0 ? (
@@ -1834,7 +1845,7 @@ const App: React.FC = () => {
 										))
 									) : (
 										<div className="text-center py-8 text-slate-400">
-											<p className="text-sm">OS 데이터 없음</p>
+											<p className="text-sm">{t('tech.noOsData')}</p>
 										</div>
 									)}
 								</div>
@@ -1850,40 +1861,40 @@ const App: React.FC = () => {
 							<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowGoalModal(false)}>
 								<div className="bg-white p-5 sm:p-8 rounded-2xl sm:rounded-3xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
 									<div className="flex justify-between items-center mb-4 sm:mb-6">
-										<h3 className="text-lg sm:text-xl font-black text-slate-900">새 목표 추가</h3>
+										<h3 className="text-lg sm:text-xl font-black text-slate-900">{t('goals.addNewGoal')}</h3>
 										<button onClick={() => setShowGoalModal(false)} className="p-2 hover:bg-slate-100 rounded-xl">
 											<X size={20} className="text-slate-400" />
 										</button>
 									</div>
 									<div className="space-y-3 sm:space-y-4">
 										<div>
-											<label className="block text-sm font-bold text-slate-600 mb-2">목표 이름</label>
+											<label className="block text-sm font-bold text-slate-600 mb-2">{t('goals.goalName')}</label>
 											<input
 												type="text"
 												value={newGoal.name}
 												onChange={e => setNewGoal(prev => ({ ...prev, name: e.target.value }))}
-												placeholder="예: 일일 방문자 1000명 달성"
+												placeholder={t('goals.placeholder')}
 												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
 											/>
 										</div>
 										<div>
-											<label className="block text-sm font-bold text-slate-600 mb-2">목표 유형</label>
+											<label className="block text-sm font-bold text-slate-600 mb-2">{t('goals.goalType')}</label>
 											<select
 												value={newGoal.goal_type}
 												onChange={e => handleGoalTypeChange(e.target.value as GoalType)}
 												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
 											>
-												<option value="visitors">일일 방문자 (명)</option>
-												<option value="stay_time">평균 체류시간 (초)</option>
-												<option value="page_views">페이지뷰 (회)</option>
-												<option value="bounce_rate">이탈률 (%, 목표 이하)</option>
-												<option value="sessions">세션 수 (회)</option>
-												<option value="new_visitors">신규 방문자 (명)</option>
+												<option value="visitors">{t('goals.visitorsOption')}</option>
+												<option value="stay_time">{t('goals.stayTimeOption')}</option>
+												<option value="page_views">{t('goals.pageViewsOption')}</option>
+												<option value="bounce_rate">{t('goals.bounceRateOption')}</option>
+												<option value="sessions">{t('goals.sessionsOption')}</option>
+												<option value="new_visitors">{t('goals.newVisitorsOption')}</option>
 											</select>
 										</div>
 										<div>
 											<label className="block text-sm font-bold text-slate-600 mb-2">
-												목표 값 ({goalTypeDefaults[newGoal.goal_type as GoalType]?.unit || ''})
+												{t('goals.goalValue')} ({goalTypeDefaults[newGoal.goal_type as GoalType]?.unit || ''})
 											</label>
 											<input
 												type="number"
@@ -1893,24 +1904,24 @@ const App: React.FC = () => {
 												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
 											/>
 											{newGoal.goal_type === 'bounce_rate' && (
-												<p className="text-xs text-slate-400 mt-1">* 이탈률은 목표 값 이하로 낮추는 것이 목표입니다.</p>
+												<p className="text-xs text-slate-400 mt-1">{t('goals.bounceRateNote')}</p>
 											)}
 										</div>
 										<div>
-											<label className="block text-sm font-bold text-slate-600 mb-2">목표 기간</label>
+											<label className="block text-sm font-bold text-slate-600 mb-2">{t('goals.goalPeriod')}</label>
 											<select
 												value={newGoal.period}
 												onChange={e => setNewGoal(prev => ({ ...prev, period: e.target.value }))}
 												className="w-full px-3 sm:px-4 py-2.5 sm:py-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm sm:text-base"
 											>
-												<option value="daily">일간 (1일)</option>
-												<option value="weekly">주간 (7일)</option>
-												<option value="monthly">월간 (30일)</option>
-												<option value="unlimited">기한없음</option>
+												<option value="daily">{t('goals.daily')}</option>
+												<option value="weekly">{t('goals.weekly')}</option>
+												<option value="monthly">{t('goals.monthly')}</option>
+												<option value="unlimited">{t('goals.unlimited')}</option>
 											</select>
 											{newGoal.period !== 'unlimited' && (
 												<p className="text-xs text-slate-400 mt-1">
-													* 목표 기간: 설정일로부터 {newGoal.period === 'daily' ? '1일' : newGoal.period === 'weekly' ? '7일' : '30일'}
+													{t('goals.periodNote', { days: newGoal.period === 'daily' ? '1' : newGoal.period === 'weekly' ? '7' : '30' })}
 												</p>
 											)}
 										</div>
@@ -1920,14 +1931,14 @@ const App: React.FC = () => {
 											onClick={() => setShowGoalModal(false)}
 											className="flex-1 px-4 py-2.5 sm:py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors text-sm sm:text-base"
 										>
-											취소
+											{t('goals.cancel')}
 										</button>
 										<button
 											onClick={handleCreateGoal}
 											disabled={!newGoal.name}
 											className="flex-1 px-4 py-2.5 sm:py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 text-sm sm:text-base"
 										>
-											추가
+											{t('goals.add')}
 										</button>
 									</div>
 								</div>
@@ -1949,9 +1960,9 @@ const App: React.FC = () => {
 												<Target size={40} className="hidden lg:block" />
 											</div>
 											<div>
-												<p className="text-[10px] sm:text-xs font-black uppercase text-indigo-400 tracking-widest mb-1 sm:mb-2">나의 목표</p>
+												<p className="text-[10px] sm:text-xs font-black uppercase text-indigo-400 tracking-widest mb-1 sm:mb-2">{t('goals.myGoals')}</p>
 												<h4 className="text-xl sm:text-2xl lg:text-3xl font-black">
-													{customGoals.length > 0 ? `${customGoals.length}개의 목표` : '목표를 설정해보세요'}
+													{customGoals.length > 0 ? t('goals.goalsCount', { count: customGoals.length }) : t('goals.setGoals')}
 												</h4>
 											</div>
 										</div>
@@ -1961,7 +1972,7 @@ const App: React.FC = () => {
 										>
 											<Target size={16} className="sm:hidden" />
 											<Target size={18} className="hidden sm:block" />
-											새 목표 추가
+											{t('goals.addNewGoal')}
 										</button>
 									</div>
 								</div>
@@ -1991,7 +2002,7 @@ const App: React.FC = () => {
 																	</span>
 																) : (
 																	<span className="text-[10px] sm:text-xs font-bold px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400">
-																		기한없음
+																		{t('goals.unlimited')}
 																	</span>
 																)}
 															</div>
@@ -2006,7 +2017,7 @@ const App: React.FC = () => {
 													</div>
 													<div className="flex justify-between text-xs sm:text-sm font-bold mb-2">
 														<span className="text-slate-400">
-															{goal.period === 'unlimited' ? '기한없음' : dDayInfo ? `${dDayInfo.targetDate}까지` : goal.period === 'daily' ? '일간' : goal.period === 'weekly' ? '주간' : '월간'}
+															{goal.period === 'unlimited' ? t('goals.unlimited') : dDayInfo ? `${t('goals.until')} ${dDayInfo.targetDate}` : goal.period === 'daily' ? t('goals.daily') : goal.period === 'weekly' ? t('goals.weekly') : t('goals.monthly')}
 														</span>
 														<span className="text-white text-right">
 															{goal.goal_type === 'bounce_rate'
@@ -2023,9 +2034,9 @@ const App: React.FC = () => {
 													</div>
 													<div className="flex justify-between items-center mt-1.5 sm:mt-2">
 														<span className="text-[10px] sm:text-xs text-slate-500">
-															{goal.goal_type === 'bounce_rate' ? '낮을수록 좋음' : ''}
+															{goal.goal_type === 'bounce_rate' ? t('goals.lowerIsBetter') : ''}
 														</span>
-														<p className="text-[10px] sm:text-xs font-bold text-indigo-400">{progress.toFixed(1)}% 달성</p>
+														<p className="text-[10px] sm:text-xs font-bold text-indigo-400">{progress.toFixed(1)}% {t('goals.achieved')}</p>
 													</div>
 												</div>
 											);
@@ -2033,12 +2044,12 @@ const App: React.FC = () => {
 									</div>
 								) : (
 									<div className="bg-white/5 p-6 sm:p-8 rounded-xl sm:rounded-2xl text-center">
-										<p className="text-slate-400 mb-3 sm:mb-4 text-sm sm:text-base">아직 설정된 목표가 없습니다.</p>
+										<p className="text-slate-400 mb-3 sm:mb-4 text-sm sm:text-base">{t('goals.noGoalsYet')}</p>
 										<button
 											onClick={() => setShowGoalModal(true)}
 											className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all"
 										>
-											첫 번째 목표 만들기
+											{t('goals.createFirstGoal')}
 										</button>
 									</div>
 								)}
@@ -2053,7 +2064,7 @@ const App: React.FC = () => {
 									<Lightbulb size={20} className="hidden sm:block lg:hidden text-amber-500" />
 									<Lightbulb size={22} className="hidden lg:block text-amber-500" />
 								</div>
-								최적화 팁
+								{t('tips.optimizationTips')}
 							</h3>
 							<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
 								{getOptimizationTips().map((tip, i) => (
@@ -2078,12 +2089,12 @@ const App: React.FC = () => {
 								<div className="w-20 h-20 bg-slate-100 rounded-3xl flex items-center justify-center mx-auto mb-6">
 									<Globe size={40} className="text-slate-300" />
 								</div>
-								<h3 className="text-2xl font-black text-slate-900 mb-3">외부 사이트 성능 측정</h3>
+								<h3 className="text-2xl font-black text-slate-900 mb-3">{t('performance.externalSitePerf')}</h3>
 								<p className="text-slate-500 mb-6 max-w-lg mx-auto">
-									URL로 가져온 프로젝트는 외부 호스팅 사이트입니다. 성능 데이터는 실제 사이트 방문자의 브라우저에서 수집됩니다.
+									{t('performance.externalSiteDesc')}
 								</p>
 								<div className="flex items-center justify-center gap-3 mb-8">
-									<span className="text-sm font-bold text-slate-400">원본 사이트:</span>
+									<span className="text-sm font-bold text-slate-400">{t('performance.originalSite')}</span>
 									<a
 										href={currentProject.source_url || "#"}
 										target="_blank"
@@ -2099,7 +2110,7 @@ const App: React.FC = () => {
 									className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
 								>
 									{isRecrawling ? <Loader2 size={18} className="animate-spin" /> : <RefreshCcw size={18} />}
-									사이트 다시 가져오기
+									{t('performance.refetchSite')}
 								</button>
 							</div>
 
@@ -2108,8 +2119,8 @@ const App: React.FC = () => {
 								<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm">
 									<div className="flex items-center justify-between mb-8">
 										<div>
-											<h3 className="text-2xl font-black text-slate-900 tracking-tight">실제 사용자 성능 데이터</h3>
-											<p className="text-sm font-bold text-slate-400 mt-1">Core Web Vitals ({webPerformanceData.sample_count}개 샘플)</p>
+											<h3 className="text-2xl font-black text-slate-900 tracking-tight">{t('performance.realUserPerfData')}</h3>
+											<p className="text-sm font-bold text-slate-400 mt-1">Core Web Vitals ({webPerformanceData.sample_count} {t('performance.samples')})</p>
 										</div>
 										<span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Real User Monitoring</span>
 									</div>
@@ -2146,7 +2157,7 @@ const App: React.FC = () => {
 										</div>
 										<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
 											<div className="flex items-center gap-2 mb-3">
-												<span className="text-xs font-black text-slate-400 uppercase">페이지 로드</span>
+												<span className="text-xs font-black text-slate-400 uppercase">{t('performance.pageLoad')}</span>
 											</div>
 											<p className="text-2xl font-black text-slate-900">{(webPerformanceData.page_load / 1000).toFixed(2)}s</p>
 										</div>
@@ -2160,7 +2171,7 @@ const App: React.FC = () => {
 				// ZIP 프로젝트 - 자체 호스팅 사이트 성능 분석
 				const perfScore = performanceData?.performance_score ?? 0;
 				const perfScoreColor = perfScore >= 90 ? "#10b981" : perfScore >= 50 ? "#f59e0b" : "#ef4444";
-				const perfScoreText = perfScore >= 90 ? "매우 안정적인" : perfScore >= 50 ? "개선이 필요한" : "최적화가 시급한";
+				const perfScoreText = perfScore >= 90 ? t('performance.excellent') : perfScore >= 50 ? t('performance.needsImprovement') : t('performance.critical');
 				const perfMetricIcons: Record<string, React.ReactNode> = {
 					LCP: <Clock size={18} />,
 					TTFB: <Zap size={18} />,
@@ -2194,12 +2205,12 @@ const App: React.FC = () => {
 								</div>
 								<div className="flex-1 space-y-6">
 									<div className="space-y-2">
-										<h3 className="text-3xl font-black text-slate-900 tracking-tight">전체 성능 분석</h3>
+										<h3 className="text-3xl font-black text-slate-900 tracking-tight">{t('performance.overallAnalysis')}</h3>
 										<p className="text-slate-400 text-sm font-bold leading-relaxed max-w-md">
 											{performanceData ? (
-												<>귀하의 사이트는 {perfScoreText} 로딩 성능을 보이고 있습니다. {perfScore >= 90 ? <>사용자의 <span className="text-indigo-600">95% 이상</span>이 쾌적한 환경을 경험합니다.</> : perfScore >= 50 ? "일부 항목의 최적화를 권장합니다." : "성능 최적화가 필요합니다."}</>
+												<>{t('performance.sitePerf', { perfType: perfScoreText })} {perfScore >= 90 ? t('performance.excellentDesc') : perfScore >= 50 ? t('performance.needsImprovementDesc') : t('performance.criticalDesc')}</>
 											) : (
-												"성능 데이터를 불러오는 중입니다..."
+												t('performance.loadingPerf')
 											)}
 										</p>
 									</div>
@@ -2210,7 +2221,7 @@ const App: React.FC = () => {
 												<span className="text-slate-600">{opt.label}</span>
 											</div>
 										)) : (
-											<span className="text-slate-400 text-xs">최적화 정보 없음</span>
+											<span className="text-slate-400 text-xs">{t('performance.noOptimizationData')}</span>
 										)}
 									</div>
 								</div>
@@ -2218,15 +2229,15 @@ const App: React.FC = () => {
 
 							<div className="bg-[#111827] p-10 rounded-[3rem] text-white flex flex-col justify-between shadow-2xl relative">
 								<div>
-									<h4 className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em] mb-8 flex items-center gap-2">리소스 최적화 현황</h4>
+									<h4 className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em] mb-8 flex items-center gap-2">{t('performance.resourceOptimization')}</h4>
 									<div className="space-y-6">
 										{performanceData?.optimizations?.length ? performanceData.optimizations.map((opt, i) => (
 											<div key={i} className="flex justify-between items-center group cursor-default">
 												<span className="text-[13px] font-bold text-slate-400 group-hover:text-slate-200 transition-colors">{opt.label}</span>
-												<span className={`text-xs font-black ${opt.passed ? "text-emerald-400" : "text-amber-400"}`}>{opt.passed ? "GOOD" : "개선 필요"}</span>
+												<span className={`text-xs font-black ${opt.passed ? "text-emerald-400" : "text-amber-400"}`}>{opt.passed ? t('performance.good') : t('performance.needsWork')}</span>
 											</div>
 										)) : (
-											<span className="text-slate-500 text-xs">데이터 없음</span>
+											<span className="text-slate-500 text-xs">{t('performance.noData')}</span>
 										)}
 									</div>
 								</div>
@@ -2234,7 +2245,7 @@ const App: React.FC = () => {
 									onClick={() => setShowRedeployModal(true)}
 									className="w-full mt-10 bg-indigo-600 hover:bg-indigo-700 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
 								>
-									<Upload size={14} /> 새 버전 배포
+									<Upload size={14} /> {t('performance.deployNewVersion')}
 								</button>
 							</div>
 						</div>
@@ -2262,7 +2273,7 @@ const App: React.FC = () => {
 								</div>
 							)) : (
 								<div className="col-span-3 text-center py-16 text-slate-400">
-									{isAnalyticsLoading ? "성능 데이터를 불러오는 중..." : "성능 데이터가 없습니다"}
+									{isAnalyticsLoading ? t('performance.loadingPerfShort') : t('performance.noPerf')}
 								</div>
 							)}
 						</div>
@@ -2272,8 +2283,8 @@ const App: React.FC = () => {
 							<div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-sm">
 								<div className="flex items-center justify-between mb-8">
 									<div>
-										<h3 className="text-2xl font-black text-slate-900 tracking-tight">실제 사용자 성능 데이터</h3>
-										<p className="text-sm font-bold text-slate-400 mt-1">Core Web Vitals (자체 수집, {webPerformanceData.sample_count}개 샘플)</p>
+										<h3 className="text-2xl font-black text-slate-900 tracking-tight">{t('performance.realUserPerfData')}</h3>
+										<p className="text-sm font-bold text-slate-400 mt-1">Core Web Vitals ({t('performance.selfCollected')}, {webPerformanceData.sample_count} {t('performance.samples')})</p>
 									</div>
 									<span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Real User Monitoring</span>
 								</div>
@@ -2319,7 +2330,7 @@ const App: React.FC = () => {
 									</div>
 									<div className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
 										<div className="flex items-center gap-2 mb-3">
-											<span className="text-xs font-black text-slate-400 uppercase">페이지 로드</span>
+											<span className="text-xs font-black text-slate-400 uppercase">{t('performance.pageLoad')}</span>
 										</div>
 										<p className="text-2xl font-black text-slate-900">{(webPerformanceData.page_load / 1000).toFixed(2)}s</p>
 									</div>
@@ -2349,7 +2360,7 @@ const App: React.FC = () => {
 			<div className="flex items-center gap-6">
 				{currentView !== ViewID.ANALYTICS && !isAuthenticated && (
 					<button onClick={() => setCurrentView(currentView === ViewID.LOGIN ? ViewID.CONNECT : ViewID.LOGIN)} className="text-sm font-black text-slate-500 hover:text-indigo-600 transition-colors">
-						{currentView === ViewID.LOGIN ? "서비스 연결" : "로그인"}
+						{currentView === ViewID.LOGIN ? t('auth.connectService') : t('auth.login')}
 					</button>
 				)}
 				{isAuthenticated && (
@@ -2372,13 +2383,13 @@ const App: React.FC = () => {
 								}}
 								className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black hover:bg-indigo-700 transition-colors"
 							>
-								대시보드
+								{t('dashboard.dashboard')}
 							</button>
 						)}
 						<button
 							onClick={handleLogout}
 							className="p-2 text-slate-400 hover:text-rose-500 transition-colors"
-							title="로그아웃"
+							title={t('auth.logout')}
 						>
 							<LogOut size={18} />
 						</button>
@@ -2401,12 +2412,12 @@ const App: React.FC = () => {
 					<div className="space-y-1.5 text-slate-500 text-[12px] font-bold leading-relaxed">
 						<div className="flex items-center gap-3">
 							<MapPin size={14} className="text-slate-300" />
-							<span>서울 강남구 역삼로 172 5층</span>
+							<span>{t('footer.address')}</span>
 						</div>
 						<div className="flex items-center gap-3">
 							<Mail size={14} className="text-slate-300" />
 							<span>
-								문의{" "}
+								{t('footer.contact')}{" "}
 								<a href="mailto:mason0713sh@gmail.com" className="text-indigo-600 hover:text-indigo-700 underline underline-offset-4 decoration-indigo-200 hover:decoration-indigo-600 transition-all font-black">
 									mason0713sh@gmail.com
 								</a>
@@ -2454,13 +2465,13 @@ const App: React.FC = () => {
 				<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[200]" onClick={() => setShowRedeployModal(false)}>
 					<div className="bg-white rounded-[2rem] p-8 w-full max-w-lg shadow-2xl" onClick={(e) => e.stopPropagation()}>
 						<div className="flex items-center justify-between mb-6">
-							<h3 className="text-xl font-black text-slate-900">프로젝트 재배포</h3>
+							<h3 className="text-xl font-black text-slate-900">{t('redeploy.title')}</h3>
 							<button onClick={() => setShowRedeployModal(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-colors">
 								<X size={20} className="text-slate-400" />
 							</button>
 						</div>
 						<p className="text-sm text-slate-500 mb-6">
-							새로운 ZIP 파일을 업로드하여 <span className="font-bold text-indigo-600">{currentProject?.subdomain}.artify.page</span>를 업데이트합니다.
+							{t('redeploy.description')} <span className="font-bold text-indigo-600">{currentProject?.subdomain}.artify.page</span>{t('redeploy.toUpdate')}
 						</p>
 						<div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 text-center hover:border-indigo-300 transition-colors">
 							<input
@@ -2480,8 +2491,8 @@ const App: React.FC = () => {
 								) : (
 									<>
 										<Upload size={32} className="mx-auto text-slate-300 mb-3" />
-										<p className="font-bold text-slate-600 mb-1">ZIP 파일을 선택하세요</p>
-										<p className="text-sm text-slate-400">클릭하여 파일 선택</p>
+										<p className="font-bold text-slate-600 mb-1">{t('redeploy.selectZip')}</p>
+										<p className="text-sm text-slate-400">{t('redeploy.clickToSelect')}</p>
 									</>
 								)}
 							</label>
@@ -2494,7 +2505,7 @@ const App: React.FC = () => {
 								}}
 								className="flex-1 py-3 px-6 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors"
 							>
-								취소
+								{t('goals.cancel')}
 							</button>
 							<button
 								onClick={handleRedeploy}
@@ -2502,7 +2513,7 @@ const App: React.FC = () => {
 								className="flex-1 py-3 px-6 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
 							>
 								{isRedeploying ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
-								{isRedeploying ? "재배포 중..." : "재배포"}
+								{isRedeploying ? t('status.redeploying') : t('status.redeploy')}
 							</button>
 						</div>
 					</div>
